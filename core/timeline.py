@@ -75,7 +75,7 @@ def _ticket_events(conn: sqlite3.Connection, where: str, param: str
             out.append(TimelineEvent(
                 ts=r["created_at"], kind="ticket", session_id=r["session_id"],
                 buyer=r["buyer"], title=f"创建{label}",
-                detail=f"{reason or ''}（{r['status']}）".strip("（）"),
+                detail=f"{reason}（{r['status']}）" if reason else r["status"],
                 ref_id=r["ticket_no"], is_open=is_open,
             ))
             if r["finished_at"]:
