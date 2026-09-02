@@ -49,6 +49,22 @@ def test_chat_values_preserved_verbatim(conn):
     assert "泵头是坏的" in row["message_text"]
 
 
+def test_promise_insert_or_replace_is_idempotent(conn):
+    """C：promise 需要幂等键，否则批处理重跑会产生重复行并漏进 buyer_timeline。"""
+    row = ("MSG-1", "S00001", "魏h**", "72 小时内补发", "补发",
+           "2026-05-10 10:00:00", "2026-05-13 10:00:00", None, 0, 0)
+    sql = (
+        "INSERT OR REPLACE INTO promise (message_id, session_id, buyer,"
+        " promise_text, promise_type, made_at, deadline_at, ticket_no,"
+        " closed, overdue) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+    conn.execute(sql, row)
+    conn.execute(sql, row)
+    conn.commit()
+    count = conn.execute("SELECT COUNT(*) c FROM promise").fetchone()["c"]
+    assert count == 1
+
+
 def test_open_tickets_total_is_28(conn):
     loader.load_raw_tables(conn)
     total = sum(

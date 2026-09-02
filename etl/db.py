@@ -17,7 +17,8 @@ DERIVED_DDL = [
         open_ticket_count INTEGER NOT NULL,
         scene_dist       TEXT    NOT NULL,   -- JSON: {scene_major: 次数}
         first_contact_at TEXT,
-        last_contact_at  TEXT
+        last_contact_at  TEXT,
+        risk_level       TEXT
     )
     """,
     """
@@ -56,7 +57,8 @@ DERIVED_DDL = [
         handler     TEXT,
         detail      TEXT,
         created_at  TEXT,
-        updated_at  TEXT
+        updated_at  TEXT,
+        UNIQUE(risk_type, session_id, detected_by)
     )
     """,
     """
@@ -71,7 +73,8 @@ DERIVED_DDL = [
         deadline_at   TEXT,
         ticket_no     TEXT,
         closed        INTEGER NOT NULL DEFAULT 0,
-        overdue       INTEGER NOT NULL DEFAULT 0
+        overdue       INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(message_id, promise_text)
     )
     """,
 ]
@@ -97,7 +100,7 @@ def create_tables(conn: sqlite3.Connection) -> None:
     for table, spec in TABLES.items():
         cols = []
         for eng in spec.columns.values():
-            cols.append(f"{eng} TEXT PRIMARY KEY" if eng == spec.pk else f"{eng} TEXT")
+            cols.append(f"{eng} TEXT PRIMARY KEY NOT NULL" if eng == spec.pk else f"{eng} TEXT")
         conn.execute(f"CREATE TABLE IF NOT EXISTS {table} ({', '.join(cols)})")
     for ddl in DERIVED_DDL:
         conn.execute(ddl)

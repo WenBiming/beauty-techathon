@@ -2,7 +2,7 @@
 import sqlite3
 from dataclasses import dataclass, field
 
-from etl.schema import TICKET_TABLES
+from etl.schema import CLOSED_STATUS, TICKET_TABLES
 
 MOCK_DISCLAIMER = (
     "⚠ 本数据集全部内容为官方提供的 AI 生成虚构 MOCK 数据，"
@@ -22,6 +22,8 @@ class QualityReport:
     orphan_ticket_sessions: list[str]
     consult_only_sessions: list[str]
     collision_suspects: list[dict] = field(default_factory=list)
+    orphan_order_buyers: list[str] = field(default_factory=list)
+    orphan_ticket_buyers: list[str] = field(default_factory=list)
 
 
 def _scalar(conn: sqlite3.Connection, sql: str) -> int:
@@ -32,17 +34,25 @@ def check(conn: sqlite3.Connection) -> QualityReport:
     chat_sessions = {
         r["session_id"] for r in conn.execute("SELECT DISTINCT session_id FROM chat")
     }
+    chat_buyers = {
+        r["buyer"] for r in conn.execute("SELECT DISTINCT buyer FROM chat")
+    }
     order_sessions = {
         r["session_id"] for r in conn.execute("SELECT DISTINCT session_id FROM orders")
     }
+    order_buyers = {
+        r["buyer"] for r in conn.execute("SELECT DISTINCT buyer FROM orders")
+    }
     ticket_sessions: set[str] = set()
+    ticket_buyers: set[str] = set()
     ticket_total = 0
     open_total = 0
     for t in TICKET_TABLES:
-        for r in conn.execute(f"SELECT session_id, status FROM {t}"):
+        for r in conn.execute(f"SELECT session_id, buyer, status FROM {t}"):
             ticket_sessions.add(r["session_id"])
+            ticket_buyers.add(r["buyer"])
             ticket_total += 1
-            if r["status"] != "已完结":
+            if r["status"] != CLOSED_STATUS:
                 open_total += 1
 
     # 昵称碰撞嫌疑：同一昵称的订单收货省份多于 1 个
@@ -74,6 +84,8 @@ def check(conn: sqlite3.Connection) -> QualityReport:
         consult_only_sessions=sorted(
             chat_sessions - order_sessions - ticket_sessions),
         collision_suspects=suspects,
+        orphan_order_buyers=sorted(order_buyers - chat_buyers),
+        orphan_ticket_buyers=sorted(ticket_buyers - chat_buyers),
     )
 
 
@@ -87,6 +99,8 @@ def format_report(report: QualityReport) -> str:
         f"工单 {report.ticket_count}（未完结 {report.open_ticket_count}）",
         f"孤儿订单会话: {len(report.orphan_order_sessions)}",
         f"孤儿工单会话: {len(report.orphan_ticket_sessions)}",
+        f"订单买家不在 chat 中（spec §2.1 假设）: {len(report.orphan_order_buyers)}",
+        f"工单买家不在 chat 中（spec §2.1 假设）: {len(report.orphan_ticket_buyers)}",
         f"纯咨询会话（无单无工单，走插件降级模式）: "
         f"{len(report.consult_only_sessions)}",
         f"昵称碰撞嫌疑（同昵称跨省收货，需人工核对）: "

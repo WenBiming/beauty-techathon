@@ -62,5 +62,6 @@ def generate(out_root: Path | None = None) -> list[Path]:
 
 if __name__ == "__main__":
     paths = generate()
-    print(f"已生成 {len(paths)} 张 mock 图片 → {paths[0].parent.parent}")
+    dest = paths[0].parent.parent if paths else MOCK_IMAGE_DIR
+    print(f"已生成 {len(paths)} 张 mock 图片 → {dest}")
     sys.exit(0)

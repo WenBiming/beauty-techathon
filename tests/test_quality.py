@@ -39,8 +39,17 @@ def test_nickname_collision_suspects_listed(conn):
     """spec §2.5.3：昵称是唯一身份键，需列出可疑碰撞供人工核对。"""
     r = quality.check(conn)
     assert isinstance(r.collision_suspects, list)
+    assert len(r.collision_suspects) == 2
+    assert {s["buyer"] for s in r.collision_suspects} == {"爱h**", "魏h**"}
     for s in r.collision_suspects:
         assert set(s) >= {"buyer", "provinces", "session_count"}
+
+
+def test_no_orphan_buyers(conn):
+    """spec §2.1：订单/工单里的买家都应出现在 chat 里（当前真实数据下为空）。"""
+    r = quality.check(conn)
+    assert r.orphan_order_buyers == []
+    assert r.orphan_ticket_buyers == []
 
 
 def test_format_report_mentions_mock_disclaimer(conn):

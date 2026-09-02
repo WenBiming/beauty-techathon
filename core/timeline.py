@@ -6,9 +6,7 @@
 import sqlite3
 from dataclasses import dataclass
 
-from etl.schema import TICKET_TABLES
-
-CLOSED = "已完结"
+from etl.schema import CLOSED_STATUS, TICKET_TABLES
 
 # 工单表 -> 展示用中文名
 TICKET_LABEL = {
@@ -44,17 +42,22 @@ def _chat_events(rows) -> list[TimelineEvent]:
 
 
 def _order_events(rows) -> list[TimelineEvent]:
+    """原表 paid_at 等列可能带中文备注后缀（如「（定金）」），展示层拆出来，
+    原表本身保持 1:1 灌入不做清洗。"""
     out = []
     for r in rows:
         for col, label in (("created_at", "下单"), ("paid_at", "付款"),
                            ("shipped_at", "发货")):
             if not r[col]:
                 continue
+            ts, _, note = str(r[col]).partition("（")
+            ts = ts.strip()
+            note_suffix = f" · {note[:-1]}" if note else ""
             out.append(TimelineEvent(
-                ts=r[col], kind="order", session_id=r["session_id"],
+                ts=ts, kind="order", session_id=r["session_id"],
                 buyer=r["buyer"], title=f"订单{label}",
                 detail=f"{r['item_name']} ×{r['qty']} 实付{r['paid_amount']}元"
-                       f"（{r['order_status']}）",
+                       f"（{r['order_status']}）{note_suffix}",
                 ref_id=r["order_no"],
             ))
     return out
@@ -68,7 +71,7 @@ def _ticket_events(conn: sqlite3.Connection, where: str, param: str
         for r in conn.execute(
             f"SELECT * FROM {table} WHERE {where} = ?", (param,)
         ):
-            is_open = r["status"] != CLOSED
+            is_open = r["status"] != CLOSED_STATUS
             keys = r.keys()
             reason = (r["reason"] if "reason" in keys
                       else r["symptom"] if "symptom" in keys else "")

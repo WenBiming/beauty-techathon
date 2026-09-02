@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import pytest
 
 from core import timeline
@@ -57,3 +59,51 @@ def test_consult_only_session_has_chat_events_only(conn):
     evs = timeline.session_timeline(conn, "S00002")
     assert evs
     assert {e.kind for e in evs} == {"chat"}
+
+
+def test_all_buyer_timeline_timestamps_are_isoformat_parseable(conn):
+    """spec：预售订单 paid_at 带「（定金）」等中文后缀需在展示层拆掉，
+    否则后续里程碑 datetime.fromisoformat(e.ts) 会抛错（全部 112 个买家）。"""
+    buyers = [r["buyer"] for r in conn.execute("SELECT DISTINCT buyer FROM chat")]
+    assert len(buyers) == 112
+    for buyer in buyers:
+        for e in timeline.buyer_timeline(conn, buyer):
+            datetime.fromisoformat(e.ts)
+
+
+def test_presale_deposit_order_timestamps_are_clean(conn):
+    """三个预售订单付款事件的 ts 应已拆掉「（定金）」备注。"""
+    cases = {
+        "喵g**": "2026-04-30 09:53:30",
+        "不e**": "2026-05-01 14:51:15",
+        "姚b**": "2026-05-04 08:00:39",
+    }
+    for buyer, expected_ts in cases.items():
+        evs = timeline.buyer_timeline(conn, buyer)
+        paid = [e for e in evs if e.kind == "order" and e.title == "订单付款"
+                and e.ts == expected_ts]
+        assert paid, f"{buyer} 的预售定金付款事件 ts 未清洗为 {expected_ts}"
+        assert "定金" in paid[0].detail
+
+
+def test_promise_event_appears_when_promise_row_exists(conn):
+    """F：promise 表在真实数据里恒空，_promise_events 从未被实测执行过。
+    这里手工插一行，验证列名/字段映射正确。"""
+    conn.execute(
+        "INSERT INTO promise (message_id, session_id, buyer, promise_text,"
+        " promise_type, made_at, deadline_at, ticket_no, closed, overdue)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("MSG-TEST-1", "S00005", "魏h**", "72 小时内补发", "补发",
+         "2026-05-10 10:00:00", "2026-05-13 10:00:00", None, 0, 1),
+    )
+    conn.commit()
+
+    evs = timeline.buyer_timeline(conn, "魏h**")
+    promises = [e for e in evs if e.kind == "promise"]
+    assert len(promises) == 1
+    p = promises[0]
+    assert p.is_open is True
+    assert p.ref_id == "MSG-TEST-1"
+    assert "72 小时内补发" in p.detail
+    assert "期限 2026-05-13 10:00:00" in p.detail
+    assert "已逾期" in p.title

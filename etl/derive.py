@@ -3,7 +3,7 @@ import json
 import sqlite3
 from collections import Counter, defaultdict
 
-from etl.schema import TICKET_TABLES
+from etl.schema import CLOSED_STATUS, TICKET_TABLES
 
 
 def build_scene_map(conn: sqlite3.Connection) -> int:
@@ -39,7 +39,7 @@ def _ticket_stats(conn: sqlite3.Connection) -> dict[str, tuple[int, int]]:
     for table in TICKET_TABLES:
         for r in conn.execute(f"SELECT buyer, status FROM {table}"):
             total[r["buyer"]] += 1
-            if r["status"] != "已完结":
+            if r["status"] != CLOSED_STATUS:
                 open_[r["buyer"]] += 1
     return {b: (total[b], open_[b]) for b in total}
 
@@ -73,14 +73,14 @@ def build_buyer_profile(conn: sqlite3.Connection) -> int:
             b, len(sessions[b]), len(orders.get(b, [])), sum(orders.get(b, [])),
             t_total, t_open,
             json.dumps(dict(scenes[b]), ensure_ascii=False),
-            first.get(b), last.get(b),
+            first.get(b), last.get(b), None,
         ))
 
     conn.execute("DELETE FROM buyer_profile")
     conn.executemany(
         "INSERT INTO buyer_profile (buyer, session_count, order_count, total_paid,"
         " ticket_count, open_ticket_count, scene_dist, first_contact_at,"
-        " last_contact_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " last_contact_at, risk_level) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         rows,
     )
     conn.commit()

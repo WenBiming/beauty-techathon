@@ -21,7 +21,7 @@ def test_paths_align_with_declared_image_path(tmp_path):
 
 def test_generated_files_are_valid_images(tmp_path):
     paths = gen_mock_images.generate(tmp_path)
-    for p in paths[:5]:
+    for p in paths:
         with Image.open(p) as im:
             im.verify()
 
