@@ -1,0 +1,17 @@
+# 密钥 —— 绝不入库
+.env
+*apiKey*.csv
+*api-key*.csv
+*.key
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# 数据产物
+data/app.db
+data/raw/*.xlsx
+
+# 交付物中间文件
+deliverables/*.mp4
