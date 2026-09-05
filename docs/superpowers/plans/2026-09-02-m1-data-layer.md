@@ -1615,3 +1615,28 @@ git commit -m "feat(etl): ETL CLI 入口与端到端验证"
 | `buyer_profile` 表 | L0 规则层的重复进线/未完结工单信号 |
 | `scene_map` 表 | minor → major 反查（spec §4.3） |
 | `session_summary` / `risk_event` / `promise` 空表 | L1/L2 的写入目标 |
+
+## ⚠️ M2 必须先处理的前置项（M1 最终审查的残留裁决 R11）
+
+**`etl/db.py::create_tables` 全部使用 `CREATE TABLE IF NOT EXISTS`，对已物化的表不做任何 `ALTER`。**
+
+后果：任何在 schema 变更前就已存在的 `data/app.db`，重跑 ETL 时——
+
+- `buyer_profile.risk_level` 缺列 → `OperationalError: table buyer_profile has no column named risk_level`（有明确报错）
+- `promise` / `risk_event` 的 `UNIQUE` 约束**不会被补上** → 幂等保护**静默失效**（无报错，更危险）
+
+M2 会反复改这三张表的 schema，所以这是 M2 第一个任务的前置项。
+
+**修法约束**：不能简单 DROP 重建。`session_summary` / `risk_event` / `promise` 将存放 L1/L2 昂贵的大模型产物，而 `build_all` 有意不清洗这三张表（最终审查已确认这个边界是对的）。正确做法是 `PRAGMA table_info` 探测后条件性 `ALTER TABLE ADD COLUMN`，或至少把崩溃换成可操作的报错。
+
+**临时绕过**：删掉 `data/app.db` 重跑 `python -m etl.build`（全量重建仅 0.3 秒）。
+
+## 其它交给 M2 的契约（最终审查跨任务视角发现）
+
+| 事实 | M2 需要注意什么 |
+|---|---|
+| `build_buyer_profile` 是整表 DELETE + 全量重插 | M2 若 `ALTER TABLE` 给 `buyer_profile` 加列并填值，下次 ETL 会把它清成 NULL 且不报错。`risk_level` 列已预留（M1 写 None）。 |
+| `ticket_reissue` 没有 `tracking_no` 列 | 它拆成了 `orig_tracking_no` / `reissue_tracking_no`。`draft_ticket` 若写通用的 `r["tracking_no"]` 循环会在这张表上 KeyError。 |
+| `orders.paid_at` 等时间列可能带中文后缀 | 原表保留原值（如 `2026-04-30 09:53:30（定金）`，共 3 行）。`core.timeline` 已在展示层拆掉后缀，`TimelineEvent.ts` 保证可 `fromisoformat` 解析；**直接读原表的代码要自己处理**。 |
+| `core/timeline.py:_ticket_events` 用 `r.keys()` 运行时嗅探 `reason`/`symptom` | `ticket_adverse` 用 `symptom`，其余 4 张用 `reason`。这个差异应下沉到 `TableSpec`（如加 `reason_col` 字段），M2 有机会时收敛。 |
+| `PRAGMA foreign_keys = ON` 但全库无 FOREIGN KEY | 是条空 pragma，不要误以为有引用完整性保护。 |
