@@ -108,7 +108,7 @@ TABLES: dict[str, TableSpec]; TICKET_TABLES: list[str]; CLOSED_STATUS = "已完�
 - Produces:
   - `core.clock.GLOBAL_NOW: str` — 数据集末尾时间字符串 `"2026-05-23 10:04:48"`
   - `core.clock.reference_now(conn, session_id: str | None = None) -> datetime` — 传 `session_id` 返回该会话最后一条消息时间（情景时钟）；不传返回全局时钟
-  - `core.clock.business_days_between(start: datetime, end: datetime) -> int` — 跳过周六周日的工作日数
+  - `core.clock.add_business_days(start: datetime, n: int) -> datetime` — 往后推 n 个工作日，跳过周六周日
 
 **背景**：数据集是 2026-05-05~05-23，系统跑在真实当下。实测若以真实今天为基准，28 张未完结工单 **28/28 都超 3 天**，预警失去区分度；以会话最后消息时间为基准则中位 1 天、最大 7 天，有区分度（spec §4.2.1）。
 
@@ -149,19 +149,21 @@ def test_unknown_session_falls_back_to_global(conn):
     assert clock.reference_now(conn, "S99999") == clock.reference_now(conn)
 
 
-def test_business_days_skips_weekend():
-    # 2026-05-05 是周二；+3 个工作日 = 05-08 周五
+def test_add_business_days_within_week():
+    # 2026-05-05 是周二，+3 个工作日 = 05-08 周五
     tue = datetime.datetime(2026, 5, 5, 12, 0)
-    fri = datetime.datetime(2026, 5, 8, 12, 0)
-    assert clock.business_days_between(tue, fri) == 3
-    # 跨周末：周五 -> 下周一 只算 1 个工作日
-    mon = datetime.datetime(2026, 5, 11, 12, 0)
-    assert clock.business_days_between(fri, mon) == 1
+    assert clock.add_business_days(tue, 3) == datetime.datetime(2026, 5, 8, 12, 0)
 
 
-def test_business_days_same_day_is_zero():
+def test_add_business_days_skips_weekend():
+    # 2026-05-07 是周四，+2 个工作日跨过周末 = 05-11 周一
+    thu = datetime.datetime(2026, 5, 7, 9, 0)
+    assert clock.add_business_days(thu, 2) == datetime.datetime(2026, 5, 11, 9, 0)
+
+
+def test_add_zero_business_days_is_identity():
     d = datetime.datetime(2026, 5, 5, 9, 0)
-    assert clock.business_days_between(d, d) == 0
+    assert clock.add_business_days(d, 0) == d
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
@@ -201,24 +203,26 @@ def reference_now(conn: sqlite3.Connection, session_id: str | None = None) -> da
     return datetime.fromisoformat(GLOBAL_NOW)
 
 
-def business_days_between(start: datetime, end: datetime) -> int:
-    """start 到 end 之间的工作日数，跳过周六周日。end <= start 返回 0。"""
-    if end <= start:
-        return 0
-    days = 0
-    cur = start.date()
-    last = end.date()
-    while cur < last:
+def add_business_days(start: datetime, n: int) -> datetime:
+    """从 start 往后推 n 个工作日，跳过周六周日。n <= 0 原样返回。
+
+    承诺解析用它把「3 个工作日内」换算成绝对 deadline。
+    """
+    if n <= 0:
+        return start
+    cur = start
+    left = n
+    while left > 0:
         cur += timedelta(days=1)
         if cur.weekday() < 5:      # 0=周一 ... 4=周五
-            days += 1
-    return days
+            left -= 1
+    return cur
 ```
 
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `.venv/bin/python -m pytest tests/test_clock.py -v`
-Expected: 6 passed
+Expected: 7 passed
 
 - [ ] **Step 5: 提交**
 
@@ -244,6 +248,11 @@ git commit -m "feat(core): 双参考时钟（情景/全局）与工作日计算"
   - `agent.rules.compute_all(conn) -> dict[str, L0Signals]`
 
 **这一层零 token。** 这些信号是确定性可计算的，用 LLM 算既贵又不准（spec §4.2）。`is_redline` 为 True 时无条件触发 L2。
+
+**关键事实（实测）：全库 80 张工单，80 张都建单于其所属会话的最后一条消息之后。** 所以要区分两种「工单可见性」：
+
+- **`open_ticket_count` 只数「此前遗留」的未闭环工单**（其它会话的、且建单时间早于接入时点）。这是「信息孤岛」信号，全库只有 4 个会话命中——这正是它的价值所在，不要为了让数字好看去放宽它。
+- **`has_adverse_reaction` 要包含本会话自己产生的不良反应工单**。本会话的工单是客服正在处理的事，他当然知道；若沿用「建单时间 <= 接入时点」的过滤，不良反应红线**永远不会触发**（10 张全部建单于会话之后）。
 
 - [ ] **Step 1: 写失败的测试**
 
@@ -283,10 +292,26 @@ def test_first_contact_has_no_prior(conn):
 
 
 def test_adverse_reaction_is_redline(conn):
-    """S00082 是不良反应会话，必须触发红线。"""
+    """S00082 的不良反应工单建单于会话之后，仍必须触发红线。"""
     s = rules.compute(conn, "S00082")
     assert s.has_adverse_reaction is True
     assert s.is_redline is True
+
+
+def test_exactly_four_sessions_have_open_adverse_ticket(conn):
+    """10 张不良反应工单里 4 张未完结，对应 4 个会话。"""
+    hits = {k for k, v in rules.compute_all(conn).items() if v.has_adverse_reaction}
+    assert hits == {"S00010", "S00058", "S00082", "S00268"}
+
+
+def test_open_ticket_count_excludes_own_session_ticket(conn):
+    """全库 80/80 张工单建单于其会话之后；open_ticket_count 只数此前遗留的。
+
+    S00082 自己产生了一张未完结的不良反应工单，但它不算「此前遗留」。
+    """
+    s = rules.compute(conn, "S00082")
+    assert s.has_adverse_reaction is True
+    assert s.open_ticket_count == 0
 
 
 def test_only_four_sessions_have_prior_open_ticket(conn):
@@ -383,15 +408,20 @@ def compute(conn: sqlite3.Connection, session_id: str) -> L0Signals:
     for table in TICKET_TABLES:
         for r in conn.execute(f"SELECT * FROM {table} WHERE buyer = ?", (buyer,)):
             created = datetime.fromisoformat(r["created_at"])
-            if created > now:                      # 尚未发生，客服看不到
+            own_session = r["session_id"] == session_id
+            # 全库 80/80 张工单都建单于其会话结束之后。本会话自己的工单是客服
+            # 正在处理的事，他当然知道；其它会话的工单只有建单早于接入时点才看得见。
+            if not own_session and created > now:
                 continue
             if table in ("ticket_payout", "ticket_return"):
                 refunds += 1
-            if r["status"] != CLOSED_STATUS:
+            # 红线：本会话或历史遗留的未闭环不良反应工单
+            if table == "ticket_adverse" and r["status"] != CLOSED_STATUS:
+                adverse = True
+            # 「信息孤岛」信号：只数此前遗留的未闭环工单，不含本会话自己产生的
+            if r["status"] != CLOSED_STATUS and not own_session:
                 open_count += 1
                 max_age = max(max_age, (now - created).days)
-                if table == "ticket_adverse":
-                    adverse = True
 
     gaps = []
     for a, b in zip(rows, rows[1:]):
@@ -433,11 +463,12 @@ def compute_all(conn: sqlite3.Connection) -> dict[str, L0Signals]:
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `.venv/bin/python -m pytest tests/test_rules.py -v`
-Expected: 7 passed
+Expected: 9 passed
 
-> `test_adverse_reaction_is_redline` 依赖「不良反应工单在会话进行中创建」。若该断言失败，先用
-> `.venv/bin/python -c "from etl import db; c=db.connect(); print([dict(r) for r in c.execute(\"SELECT session_id,created_at,status FROM ticket_adverse\")])"`
-> 查实际数据，再判断是实现问题还是断言选错了会话——**不要直接改断言**。
+> 这三条不良反应相关的断言来自实测：10 张工单中 4 张未完结（S00010 待处理 /
+> S00058 处理中 / S00082 待处理 / S00268 处理中），且 **10 张全部建单于其会话
+> 最后一条消息之后**。若断言失败，说明 `own_session` 那段过滤逻辑写错了——
+> **不要改断言**。
 
 - [ ] **Step 5: 提交**
 
@@ -829,7 +860,7 @@ git commit -m "feat(agent): 同场景成功话术检索，SQL 小 RAG"
 - Test: `tests/test_promise.py`
 
 **Interfaces:**
-- Consumes: `core.clock.business_days_between`、`core.clock.reference_now`、`etl.schema.TICKET_TABLES`、`etl.schema.CLOSED_STATUS`
+- Consumes: `core.clock.add_business_days`、`etl.schema.TICKET_TABLES`、`etl.schema.CLOSED_STATUS`
 - Produces:
   - `agent.promise.RawPromise` — dataclass：`text: str`、`amount: int | None`、`unit: str | None`（`"hour"` / `"day"` / `"business_day"` / `None`）
   - `agent.promise.ResolvedPromise` — dataclass：`message_id: str`、`session_id: str`、`buyer: str`、`promise_text: str`、`promise_type: str`（`"hard"` / `"soft"`）、`made_at: str`、`deadline_at: str | None`、`ticket_no: str | None`、`closed: bool`、`overdue: bool`
@@ -973,6 +1004,7 @@ import sqlite3
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
+from core.clock import add_business_days
 from etl.schema import CLOSED_STATUS, TICKET_TABLES
 
 MATCH_PREFIX = 12          # locate_message 用前 N 字做子串匹配
@@ -1008,13 +1040,7 @@ def resolve_deadline(made_at: datetime, amount: int | None,
     if unit == "day":
         return made_at + timedelta(days=amount)
     if unit == "business_day":
-        cur = made_at
-        left = amount
-        while left > 0:
-            cur += timedelta(days=1)
-            if cur.weekday() < 5:
-                left -= 1
-        return cur
+        return add_business_days(made_at, amount)
     raise ValueError(f"未知时间单位 {unit!r}，应为 hour/day/business_day/None")
 
 
