@@ -1616,20 +1616,17 @@ git commit -m "feat(etl): ETL CLI 入口与端到端验证"
 | `scene_map` 表 | minor → major 反查（spec §4.3） |
 | `session_summary` / `risk_event` / `promise` 空表 | L1/L2 的写入目标 |
 
-## ⚠️ M2 必须先处理的前置项（M1 最终审查的残留裁决 R11）
+## ✅ 已解决：schema 迁移（残留裁决 R11，2026-09-05 修复，commit 12218ed）
 
-**`etl/db.py::create_tables` 全部使用 `CREATE TABLE IF NOT EXISTS`，对已物化的表不做任何 `ALTER`。**
+原缺陷：`create_tables` 全用 `CREATE TABLE IF NOT EXISTS`，对已物化的表不做变更，导致旧 `data/app.db` 重跑时 `buyer_profile.risk_level` 缺列崩溃、`promise`/`risk_event` 的 UNIQUE 幂等保护静默失效。
 
-后果：任何在 schema 变更前就已存在的 `data/app.db`，重跑 ETL 时——
+修法：
+- **UNIQUE 约束改为独立索引**（`CREATE UNIQUE INDEX IF NOT EXISTS`）。SQLite 不支持 `ALTER TABLE ADD CONSTRAINT`，但独立唯一索引对已有表有效且语义等价，新旧库走同一条路径。
+- **`_migrate_columns(conn)`** 用 `PRAGMA table_info` 探测派生表缺列并 `ALTER TABLE ADD COLUMN` 补齐，返回迁移描述列表；幂等。
+- **`DERIVED_COLUMNS` 为单一事实来源**，`DERIVED_DDL` 由它生成，迁移逻辑也读它——避免把「同一份 schema 知识存在两处」的原 bug 换个地方重演。已用运行时比对验证：全新库实际建出的列与 `DERIVED_COLUMNS` 逐字符一致。
+- 只迁移 5 张派生表；7 张原表由 loader 全量重灌，无需迁移。新列一律允许 NULL。
 
-- `buyer_profile.risk_level` 缺列 → `OperationalError: table buyer_profile has no column named risk_level`（有明确报错）
-- `promise` / `risk_event` 的 `UNIQUE` 约束**不会被补上** → 幂等保护**静默失效**（无报错，更危险）
-
-M2 会反复改这三张表的 schema，所以这是 M2 第一个任务的前置项。
-
-**修法约束**：不能简单 DROP 重建。`session_summary` / `risk_event` / `promise` 将存放 L1/L2 昂贵的大模型产物，而 `build_all` 有意不清洗这三张表（最终审查已确认这个边界是对的）。正确做法是 `PRAGMA table_info` 探测后条件性 `ALTER TABLE ADD COLUMN`，或至少把崩溃换成可操作的报错。
-
-**临时绕过**：删掉 `data/app.db` 重跑 `python -m etl.build`（全量重建仅 0.3 秒）。
+**M2 现在可以自由增删派生表的列，旧库会自动迁移。**
 
 ## 其它交给 M2 的契约（最终审查跨任务视角发现）
 
