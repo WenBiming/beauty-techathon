@@ -36,11 +36,19 @@ def search_similar_cases(conn: sqlite3.Connection, scene_minor: str, k: int = 3,
             "SELECT role, message_text FROM chat WHERE session_id = ? ORDER BY sent_at",
             (sid,),
         ).fetchall()
+
+        # 收集所有相邻的「买家→客服」配对
+        candidates = []
         for a, b in zip(rows, rows[1:]):
             if a["role"] == "买家" and b["role"] == "客服":
-                out.append(SimilarCase(
-                    session_id=sid, scene_minor=scene_minor,
-                    buyer_message=a["message_text"], agent_reply=b["message_text"],
-                ))
-                break
+                candidates.append((a["message_text"], b["message_text"]))
+
+        # 选择 agent_reply 最长的配对（避免过场话）
+        if candidates:
+            buyer_msg, agent_msg = max(candidates, key=lambda x: len(x[1]))
+            out.append(SimilarCase(
+                session_id=sid, scene_minor=scene_minor,
+                buyer_message=buyer_msg, agent_reply=agent_msg,
+            ))
+
     return out

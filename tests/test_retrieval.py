@@ -45,3 +45,36 @@ def test_reply_follows_buyer_message(conn):
         assert rows[i]["role"] == "买家"
         assert rows[i + 1]["role"] == "客服"
         assert texts[i + 1] == c.agent_reply
+
+
+def test_selects_longest_reply_over_small_talk(conn):
+    """验证选择最长的客服回复，避免过场话（如「欢迎光临」、「稍候」）。
+
+    对「催发货」场景，检索的回复不应包含「欢迎光临」这样的开场白，
+    且应明显长于会话中的首个客服回复（过场话）。
+    """
+    cases = retrieval.search_similar_cases(conn, "催发货", k=3)
+    assert len(cases) > 0, "应检索到「催发货」场景的案例"
+
+    for c in cases:
+        # 检索到的回复不应是过场话
+        assert "欢迎光临" not in c.agent_reply, f"Session {c.session_id}: 不应选中过场话"
+
+        # 验证这是会话中最长的「买家→客服」配对的客服回复
+        rows = conn.execute(
+            "SELECT role, message_text FROM chat WHERE session_id = ? ORDER BY sent_at",
+            (c.session_id,),
+        ).fetchall()
+
+        # 找会话里第一个客服回复（通常是过场话）
+        first_agent_reply = None
+        for r in rows:
+            if r["role"] == "客服":
+                first_agent_reply = r["message_text"]
+                break
+
+        # 检索到的回复应明显长于首个客服回复
+        if first_agent_reply:
+            assert len(c.agent_reply) > len(first_agent_reply), \
+                f"Session {c.session_id}: 回复长度 {len(c.agent_reply)} 应 > " \
+                f"首个客服回复长度 {len(first_agent_reply)}"
