@@ -3,12 +3,21 @@ import json
 import pytest
 
 from agent import llm, pipeline
-from etl import db
+from etl import db, derive, loader
 
 
 @pytest.fixture(scope="module")
-def conn():
-    c = db.connect()
+def conn(tmp_path_factory):
+    """写库的测试必须用隔离的临时库。
+
+    连真实 data/app.db 会让 DELETE/UPDATE 洗掉批处理产出——实测发生过：
+    跑完全量后再跑一次 pytest，promise 从 181 行掉到 2 行、risk_event 清零。
+    ETL 全量重建仅 0.3 秒，module 作用域下每个测试文件只付一次。
+    """
+    c = db.connect(tmp_path_factory.mktemp("db") / "t.db")
+    db.create_tables(c)
+    loader.load_raw_tables(c)
+    derive.build_all(c)
     yield c
     c.close()
 
