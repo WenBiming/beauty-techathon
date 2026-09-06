@@ -1,0 +1,6 @@
+{
+  "text": "{\"scene_minor\":\"催发货\",\"confidence\":0.98,\"emotion\":3,\"summary\":\"买家因出差急需催促洗发水发货，客服承诺48小时内发出。\",\"risk_tags\":[\"时效敏感\"],\"promises\":[{\"text\":\"您的订单预计48小时内发出\",\"amount\":48,\"unit\":\"hour\"}]}",
+  "model": "qwen3.8-flash",
+  "tokens_in": 626,
+  "tokens_out": 65
+}
