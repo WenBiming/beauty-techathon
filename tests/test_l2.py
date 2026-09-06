@@ -76,6 +76,16 @@ def test_context_includes_timeline_and_fewshot(conn):
     assert "KOC7263722" in ctx, "全轨迹里必须带上未闭环工单"
 
 
+def test_context_ticket_age_uses_scenario_clock_consistently(conn):
+    """头部摘要的 max_ticket_age_days（情景时钟）与【未闭环工单】小节里同一张
+    工单的挂起天数必须一致——否则模型拿到两个矛盾数字，无从分辨哪个权威。"""
+    s = rules.compute(conn, "S00099")
+    ctx = l2.build_context(conn, "S00099", s, _l1("S00099"))
+    assert f"最长挂起 {s.max_ticket_age_days} 天" in ctx
+    assert f"KOC7263722（ticket_return）状态 处理中，已挂起 {s.max_ticket_age_days} 天" in ctx
+    assert "已挂起 15 天" not in ctx, "不应退化成全局时钟算出的天数"
+
+
 def test_analyse_happy_path(conn):
     s = rules.compute(conn, "S00099")
     c = StubClient(GOOD)

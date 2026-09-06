@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from agent.llm import LLMClient
 from agent.retrieval import search_similar_cases
 from agent.tools import list_open_tickets
+from core.clock import reference_now
 from core.timeline import buyer_timeline
 
 MODEL = "qwen3.7-plus"
@@ -79,7 +80,11 @@ def build_context(conn: sqlite3.Connection, session_id: str, signals,
         lines.append(f"{e.ts} [{e.kind}] {e.title}：{e.detail}{mark}")
 
     # 未闭环工单必须显式列出，不能指望它「碰巧」落在时间线尾部
-    open_tickets = list_open_tickets(conn, signals.buyer)
+    # as_of 必须传情景时钟——build_context 是会话视角，不传会退化成全局时钟，
+    # 与头部摘要的 max_ticket_age_days 产生矛盾数字（spec §4.2.1）
+    now = reference_now(conn, session_id)
+    open_tickets = list_open_tickets(conn, signals.buyer,
+                                     as_of=now.isoformat(sep=" "))
     if open_tickets:
         lines += ["", "【未闭环工单】"]
         for t in open_tickets:
