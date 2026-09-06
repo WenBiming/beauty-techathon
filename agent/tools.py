@@ -7,6 +7,7 @@ import sqlite3
 from dataclasses import asdict
 from datetime import datetime
 
+from agent.promise import ResolvedPromise, is_overdue_at
 from agent.retrieval import search_similar_cases
 from core.clock import reference_now
 from core.timeline import buyer_timeline
@@ -103,13 +104,16 @@ def check_promises(conn: sqlite3.Connection, buyer: str,
     for r in conn.execute(
         "SELECT * FROM promise WHERE buyer = ? ORDER BY made_at", (buyer,)
     ):
-        overdue = bool(
-            r["promise_type"] == "hard" and not r["closed"] and r["deadline_at"]
-            and datetime.fromisoformat(r["deadline_at"]) < now
+        p = ResolvedPromise(
+            message_id=r["message_id"], session_id=r["session_id"],
+            buyer=r["buyer"], promise_text=r["promise_text"],
+            promise_type=r["promise_type"], made_at=r["made_at"],
+            deadline_at=r["deadline_at"], ticket_no=r["ticket_no"],
+            closed=bool(r["closed"]), overdue=bool(r["overdue"]),
         )
-        out.append({"promise_text": r["promise_text"], "made_at": r["made_at"],
-                    "deadline_at": r["deadline_at"], "closed": bool(r["closed"]),
-                    "overdue": overdue, "ticket_no": r["ticket_no"]})
+        out.append({"promise_text": p.promise_text, "made_at": p.made_at,
+                    "deadline_at": p.deadline_at, "closed": p.closed,
+                    "overdue": is_overdue_at(p, now), "ticket_no": p.ticket_no})
     return out
 
 

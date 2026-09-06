@@ -77,3 +77,23 @@ def test_check_promises_reads_promise_table(conn):
     finally:
         conn.execute("DELETE FROM promise WHERE message_id = 'm-test'")
         conn.commit()
+
+
+def test_check_promises_soft_promise_never_overdue(conn):
+    """软承诺（promise_type='soft'）即使 deadline 已过也不算逾期——这条规则
+    只存在于 agent.promise.is_overdue_at 里，钉住它能证明 check_promises
+    走的是共享实现而不是本地重写的判定逻辑。"""
+    conn.execute(
+        "INSERT OR REPLACE INTO promise (message_id, session_id, buyer,"
+        " promise_text, promise_type, made_at, deadline_at, ticket_no,"
+        " closed, overdue) VALUES ('m-test-soft','S00005','魏h**','软承诺测试',"
+        " 'soft','2026-05-05 12:08:07','2026-05-06 12:08:07',NULL,0,0)"
+    )
+    conn.commit()
+    try:
+        ps = tools.check_promises(conn, "魏h**", as_of="2026-05-09 11:34:05")
+        matches = [p for p in ps if p["promise_text"] == "软承诺测试"]
+        assert matches and matches[0]["overdue"] is False
+    finally:
+        conn.execute("DELETE FROM promise WHERE message_id = 'm-test-soft'")
+        conn.commit()
