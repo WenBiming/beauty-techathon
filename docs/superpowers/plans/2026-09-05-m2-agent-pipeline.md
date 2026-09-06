@@ -963,12 +963,21 @@ def test_soft_promise_never_overdue(conn):
 
 
 def test_closed_when_session_ticket_finished(conn):
-    """S00001 的补发换货工单已完结，其承诺应判为已闭环。"""
-    raws = [promise.RawPromise("换货单已创建，48小时内发出", 48, "hour")]
-    out = promise.evaluate(conn, "S00001", raws, as_of=datetime(2026, 9, 5))
+    """S00007 的补发换货工单 BH142092289687 已完结，其承诺应判为已闭环。"""
+    raws = [promise.RawPromise("已为您创建补发工单，48小时内发出", 48, "hour")]
+    out = promise.evaluate(conn, "S00007", raws, as_of=datetime(2026, 9, 5))
     assert out[0].closed is True
     assert out[0].overdue is False
-    assert out[0].ticket_no is not None
+    assert out[0].ticket_no == "BH142092289687"
+
+
+def test_open_ticket_leaves_promise_unclosed(conn):
+    """S00001 的补发换货工单 BH919209358357 仍是「进行中」，承诺不应判为闭环。"""
+    raws = [promise.RawPromise("换货单已创建，48小时内发出", 48, "hour")]
+    out = promise.evaluate(conn, "S00001", raws, as_of=datetime(2026, 9, 5))
+    assert out[0].closed is False
+    assert out[0].overdue is True
+    assert out[0].ticket_no == "BH919209358357"
 
 
 def test_is_overdue_at_is_pure(conn):
@@ -1114,7 +1123,7 @@ def evaluate(conn: sqlite3.Connection, session_id: str,
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `.venv/bin/python -m pytest tests/test_promise.py -v`
-Expected: 11 passed
+Expected: 12 passed
 
 - [ ] **Step 5: 提交**
 
