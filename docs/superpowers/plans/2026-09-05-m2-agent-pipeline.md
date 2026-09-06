@@ -1430,7 +1430,7 @@ def analyse(conn: sqlite3.Connection, client: LLMClient, session_id: str, *,
 - [ ] **Step 5: 运行测试确认通过**
 
 Run: `.venv/bin/python -m pytest tests/test_l1.py -v`
-Expected: 9 passed
+Expected: 8 passed
 
 - [ ] **Step 6: 写录制脚本**
 
