@@ -7,7 +7,7 @@ import sqlite3
 from dataclasses import asdict
 from datetime import datetime
 
-from agent.promise import ResolvedPromise, is_overdue_at
+from agent.promise import ResolvedPromise, is_overdue_at, session_ticket
 from agent.retrieval import search_similar_cases
 from core.clock import reference_now
 from core.timeline import buyer_timeline
@@ -62,12 +62,26 @@ def list_open_tickets(conn: sqlite3.Connection, buyer: str,
     return sorted(out, key=lambda t: t["created_at"])
 
 
-def search_cases(conn: sqlite3.Connection, scene_minor: str, k: int = 3) -> list[dict]:
-    return [asdict(c) for c in search_similar_cases(conn, scene_minor, k=k)]
+def search_cases(conn: sqlite3.Connection, scene_minor: str, k: int = 3,
+                 exclude_session: str | None = None) -> list[dict]:
+    """检索同场景历史成功话术。
+
+    exclude_session 必须透传（I5）：不排除的话，客服接入 S00099 时模型
+    function call 拿回来的「历史成功话术」第一条就是 S00099 自己——把当前
+    会话当范例喂回给它自己。l2.build_context 一直传了，工具路径此前漏了。
+    """
+    return [asdict(c) for c in search_similar_cases(
+        conn, scene_minor, k=k, exclude_session=exclude_session)]
 
 
 def draft_ticket(conn: sqlite3.Connection, session_id: str,
-                 ticket_type: str) -> dict:
+                 ticket_type: str, damage_type: str | None = None) -> dict:
+    """预填工单字段。
+
+    damage_type 是多模态识别出的语义类型（agent.vision.DAMAGE_TYPES）。传入时
+    用 vision.TICKET_HINT 校验/填充建议工单类型，把结论写进草稿供客服判断（R9）。
+    多模态是按需触发的，所以这里只做惰性导入，离线全量批处理不碰 vision。
+    """
     if ticket_type not in TICKET_DRAFT_FIELDS:
         raise KeyError(f"未知工单类型 {ticket_type!r}，"
                        f"应为 {sorted(TICKET_DRAFT_FIELDS)} 之一")
@@ -94,6 +108,14 @@ def draft_ticket(conn: sqlite3.Connection, session_id: str,
             draft["发出商品名称"] = order["item_name"]
         if "发出商品货号" in draft:
             draft["发出商品货号"] = order["sku"]
+
+    if damage_type is not None:
+        from agent.vision import TICKET_HINT          # 惰性导入，见 docstring
+        hinted = TICKET_HINT.get(damage_type)
+        draft["图片识别类型"] = damage_type
+        draft["图片建议工单类型"] = hinted
+        draft["图片与工单类型一致"] = (
+            None if hinted is None else hinted == ticket_type)
     return draft
 
 
@@ -110,6 +132,9 @@ def check_promises(conn: sqlite3.Connection, buyer: str,
             promise_type=r["promise_type"], made_at=r["made_at"],
             deadline_at=r["deadline_at"], ticket_no=r["ticket_no"],
             closed=bool(r["closed"]), overdue=bool(r["overdue"]),
+            # promise 表不存完结时间，现查一次，否则 is_overdue_at 拿不到
+            # I6 需要的「什么时候完结」，会退回旧的假阴性判定。
+            ticket_finished_at=session_ticket(conn, r["session_id"])[2],
         )
         out.append({"promise_text": p.promise_text, "made_at": p.made_at,
                     "deadline_at": p.deadline_at, "closed": p.closed,
@@ -133,10 +158,16 @@ TOOL_SCHEMAS = [
             {"order_no": _STR}, ["order_no"]),
     _schema("list_open_tickets", "列出该买家在指定时点仍未完结的工单及挂起天数",
             {"buyer": _STR, "as_of": _STR}, ["buyer"]),
-    _schema("search_cases", "检索同场景下客服处理成功的历史话术，作为参考",
-            {"scene_minor": _STR, "k": _INT}, ["scene_minor"]),
-    _schema("draft_ticket", "为当前会话生成预填好的工单字段，供客服确认后提交",
-            {"session_id": _STR, "ticket_type": _STR}, ["session_id", "ticket_type"]),
+    _schema("search_cases",
+            "检索同场景下客服处理成功的历史话术，作为参考。"
+            "exclude_session 传当前会话 ID，避免把当前会话当范例返回给它自己",
+            {"scene_minor": _STR, "k": _INT, "exclude_session": _STR},
+            ["scene_minor"]),
+    _schema("draft_ticket",
+            "为当前会话生成预填好的工单字段，供客服确认后提交。"
+            "damage_type 传图片识别出的语义类型时，会附带建议工单类型与一致性校验",
+            {"session_id": _STR, "ticket_type": _STR, "damage_type": _STR},
+            ["session_id", "ticket_type"]),
     _schema("check_promises", "查询该买家收到过的客服承诺及其闭环/逾期状态",
             {"buyer": _STR, "as_of": _STR}, ["buyer"]),
 ]

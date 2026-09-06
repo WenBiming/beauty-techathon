@@ -39,6 +39,9 @@ class ResolvedPromise:
     ticket_no: str | None
     closed: bool
     overdue: bool
+    # 工单完结时间。closed 只说「完结了」，不说「什么时候完结」——
+    # 晚于 deadline 才完结的承诺是真逾期（I6）。
+    ticket_finished_at: str | None = None
 
 
 def resolve_deadline(made_at: datetime, amount: int | None,
@@ -69,24 +72,36 @@ def locate_message(conn: sqlite3.Connection, session_id: str,
     return None
 
 
-def _session_ticket(conn: sqlite3.Connection,
-                    session_id: str) -> tuple[str | None, bool]:
-    """该会话关联的工单号与是否已完结。一个会话至多一张工单（spec §2.1）。"""
+def session_ticket(conn: sqlite3.Connection,
+                    session_id: str) -> tuple[str | None, bool, str | None]:
+    """该会话关联的工单号 / 是否已完结 / 完结时间。一个会话至多一张工单（spec §2.1）。"""
     for table in TICKET_TABLES:
         r = conn.execute(
-            f"SELECT ticket_no, status FROM {table} WHERE session_id = ?",
+            f"SELECT ticket_no, status, finished_at FROM {table} WHERE session_id = ?",
             (session_id,),
         ).fetchone()
         if r is not None:
-            return r["ticket_no"], r["status"] == CLOSED_STATUS
-    return None, False
+            return (r["ticket_no"], r["status"] == CLOSED_STATUS,
+                    r["finished_at"] or None)
+    return None, False, None
 
 
 def is_overdue_at(p: ResolvedPromise, as_of: datetime) -> bool:
-    """按给定时刻判断是否逾期。软承诺与已闭环承诺永不逾期。"""
-    if p.promise_type == "soft" or p.deadline_at is None or p.closed:
+    """按给定时刻判断是否逾期。软承诺永不逾期。
+
+    「已闭环」不等于「按时兑现」（I6）：工单晚于 deadline 才完结的承诺，
+    买家等待的那段时间是真实的服务失约——正是 spec 反复强调的「隐性服务
+    风险」。只看 status 会在本作品的招牌能力上制造假阴性。
+    """
+    if p.promise_type == "soft" or p.deadline_at is None:
         return False
-    return datetime.fromisoformat(p.deadline_at) < as_of
+    deadline = datetime.fromisoformat(p.deadline_at)
+    if p.closed and p.ticket_finished_at:
+        # 工单已完结：看它是不是在 deadline 之前完结的
+        return datetime.fromisoformat(p.ticket_finished_at) > deadline
+    if p.closed:
+        return False          # 已完结但无完结时间，保守判不逾期
+    return deadline < as_of
 
 
 def evaluate(conn: sqlite3.Connection, session_id: str,
@@ -96,7 +111,7 @@ def evaluate(conn: sqlite3.Connection, session_id: str,
         " ORDER BY sent_at DESC LIMIT 1",
         (session_id,),
     ).fetchone()
-    ticket_no, ticket_closed = _session_ticket(conn, session_id)
+    ticket_no, ticket_closed, ticket_finished_at = session_ticket(conn, session_id)
 
     out: list[ResolvedPromise] = []
     for raw in raws:
@@ -116,6 +131,7 @@ def evaluate(conn: sqlite3.Connection, session_id: str,
             ticket_no=ticket_no,
             closed=ticket_closed,
             overdue=False,
+            ticket_finished_at=ticket_finished_at,
         )
         out.append(replace(p, overdue=is_overdue_at(p, as_of)))
     return out

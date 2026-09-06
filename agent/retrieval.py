@@ -29,6 +29,9 @@ def search_similar_cases(conn: sqlite3.Connection, scene_minor: str, k: int = 3,
     ]
 
     out: list[SimilarCase] = []
+    # mock 语料里存在跨 session 逐字重复的客服回复。重复的 few-shot 既浪费
+    # token 又降低示例多样性，所以按 agent_reply 去重（F2）。
+    seen_replies: set[str] = set()
     for sid in sessions:
         if len(out) >= k:
             break
@@ -43,12 +46,17 @@ def search_similar_cases(conn: sqlite3.Connection, scene_minor: str, k: int = 3,
             if a["role"] == "买家" and b["role"] == "客服":
                 candidates.append((a["message_text"], b["message_text"]))
 
-        # 选择 agent_reply 最长的配对（避免过场话）
-        if candidates:
-            buyer_msg, agent_msg = max(candidates, key=lambda x: len(x[1]))
+        # 优先取 agent_reply 最长的配对（避免过场话）；已经出现过的回复往下顺延，
+        # 整个会话都只有重复回复才整体跳过。
+        for buyer_msg, agent_msg in sorted(candidates, key=lambda x: -len(x[1])):
+            key = (agent_msg or "").strip()
+            if key in seen_replies:
+                continue
+            seen_replies.add(key)
             out.append(SimilarCase(
                 session_id=sid, scene_minor=scene_minor,
                 buyer_message=buyer_msg, agent_reply=agent_msg,
             ))
+            break
 
     return out

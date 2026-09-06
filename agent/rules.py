@@ -66,6 +66,9 @@ def compute(conn: sqlite3.Connection, session_id: str) -> L0Signals:
             # 正在处理的事，他当然知道；其它会话的工单只有建单早于接入时点才看得见。
             if not own_session and created > now:
                 continue
+            # 退款口径只算 payout（线下打款）+ return（售后退货）。补发换货
+            # ticket_reissue 不是退款，spec §6.1「重复退款/风控异常」明确排除。
+            # 这不是漏算——已两次被当成缺陷提出，别再「修」。
             if table in ("ticket_payout", "ticket_return"):
                 refunds += 1
             # 红线：本会话或历史遗留的未闭环不良反应工单

@@ -68,6 +68,49 @@ def test_degraded_l1_still_triggers(conn):
     assert l2.should_trigger(rules.compute(conn, "S00002"), bad) is True
 
 
+def test_overdue_promise_triggers(conn):
+    """spec §4.4 点名的一类，此前从不触发：全库 47 条承诺逾期预警，风险最高
+    的会话反而拿不到深度分析与共情话术（I4）。"""
+    s = rules.compute(conn, "S00002")                       # 本来不触发
+    assert l2.should_trigger(s, _l1("S00002", emotion=4)) is False
+    assert l2.should_trigger(s, _l1("S00002", emotion=4),
+                             has_overdue_promise=True) is True
+
+
+def test_l1_risk_tags_trigger(conn):
+    """risk_tags 存了但此前无人读——L1 明说有风险却不升级，说不过去（I4）。"""
+    s = rules.compute(conn, "S00002")
+    tagged = l1.L1Result(session_id="S00002", scene_minor="催发货",
+                         scene_major="物流服务", confidence=0.9, emotion=4,
+                         summary="s", risk_tags=["时效风险"], promises=[],
+                         model="qwen3.8-flash", tokens_in=0, tokens_out=0,
+                         degraded=False)
+    assert l2.should_trigger(s, tagged) is True
+
+
+def test_context_states_redline_and_adverse_reaction(conn):
+    """红线会话必须在 prompt 里写明触发原因（I7）。
+
+    S00082 因不良反应红线被送进最贵的模型，此前 prompt 里完全没提到不良反应
+    工单未闭环——list_open_tickets 没有 rules 那套 own_session 豁免，本会话
+    自己产生的工单在【未闭环工单】小节里也看不到。
+    """
+    s = rules.compute(conn, "S00082")
+    assert s.has_adverse_reaction is True
+    ctx = l2.build_context(conn, "S00082", s, _l1("S00082"))
+    assert "红线会话：是" in ctx
+    assert "不良反应未闭环：是" in ctx
+    assert "未闭环不良反应工单" in ctx, "红线原因必须逐条落到 prompt 里"
+
+
+def test_context_marks_non_redline_session(conn):
+    s = rules.compute(conn, "S00002")
+    assert s.is_redline is False
+    ctx = l2.build_context(conn, "S00002", s, _l1("S00002"))
+    assert "红线会话：否" in ctx
+    assert "不良反应未闭环：否" in ctx
+
+
 def test_context_includes_timeline_and_fewshot(conn):
     s = rules.compute(conn, "S00099")
     ctx = l2.build_context(conn, "S00099", s, _l1("S00099"))

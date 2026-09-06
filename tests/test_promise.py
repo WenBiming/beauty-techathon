@@ -94,6 +94,34 @@ def test_open_ticket_leaves_promise_unclosed(conn):
     assert out[0].ticket_no == "BH919209358357"
 
 
+def test_ticket_finished_after_deadline_is_overdue(conn):
+    """S00051「预计1小时内送达」deadline 16:52:20，工单 WL840101369 直到
+    21:33:03 才完结——晚了 4 小时 41 分。这是**真的没按时兑现**（I6）。
+
+    此前 session_ticket 只看 status 不看完结时间，is_overdue_at 一旦 closed
+    为真就返回 False，于是这类假阴性恰好发生在本作品的招牌能力「隐性服务
+    风险」上：全库 58 条 hard+closed 承诺里有 7 条属于这一类。
+    """
+    raws = [promise.RawPromise("预计1小时内送达", 1, "hour")]
+    out = promise.evaluate(conn, "S00051", raws, as_of=datetime(2026, 5, 23, 10, 4, 48))
+    p = out[0]
+    assert p.ticket_no == "WL840101369"
+    assert p.closed is True
+    assert p.deadline_at == "2026-05-07 16:52:20"
+    assert p.ticket_finished_at == "2026-05-07 21:33:03"
+    assert p.overdue is True, "工单晚于 deadline 完结，必须判逾期"
+
+
+def test_ticket_finished_before_deadline_is_not_overdue(conn):
+    """反向钉子：同一张工单，deadline 落在完结时间之后就不该判逾期。"""
+    raws = [promise.RawPromise("预计1小时内送达", 24, "hour")]
+    out = promise.evaluate(conn, "S00051", raws, as_of=datetime(2026, 5, 23, 10, 4, 48))
+    p = out[0]
+    assert p.closed is True
+    assert p.deadline_at == "2026-05-08 15:52:20"
+    assert p.overdue is False
+
+
 def test_is_overdue_at_is_pure(conn):
     raws = [promise.RawPromise("若3个工作日内仍未到账，我们走线下打款直接补给您",
                                3, "business_day")]

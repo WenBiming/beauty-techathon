@@ -57,6 +57,69 @@ def test_list_open_tickets_respects_as_of(conn):
     assert later[0]["age_days"] >= 1
 
 
+def test_search_cases_returns_same_scene_pairs(conn):
+    """search_cases 此前没有任何行为测试，只被 schema 名单点过名。"""
+    cases = tools.search_cases(conn, "催发货", k=3)
+    assert cases
+    assert all(c["scene_minor"] == "催发货" for c in cases)
+    assert all(c["buyer_message"] and c["agent_reply"] for c in cases)
+    json.dumps(cases, ensure_ascii=False)
+
+
+def test_search_cases_excludes_current_session(conn):
+    """不排除当前会话，就会把 S00099 自己的话术当「历史成功案例」喂回给它（I5）。
+
+    实测：search_cases(conn, "催发货", k=3) 返回 ['S00043','S00062','S00099']，
+    而 S00099 正是演示主样本。l2.build_context 一直传了 exclude_session，
+    工具路径漏了——同一份知识两条路径只实现了一条。
+    """
+    plain = [c["session_id"] for c in tools.search_cases(conn, "催发货", k=3)]
+    assert "S00099" in plain
+    excluded = [c["session_id"] for c in
+                tools.search_cases(conn, "催发货", k=3, exclude_session="S00099")]
+    assert "S00099" not in excluded
+    assert excluded
+
+
+def test_search_cases_deduplicates_agent_replies(conn):
+    """mock 语料有跨 session 逐字重复的客服回复，重复的 few-shot 白花 token（F2）。"""
+    scenes = [r["scene_minor"] for r in
+              conn.execute("SELECT DISTINCT scene_minor FROM chat")]
+    for scene in scenes:
+        replies = [c["agent_reply"] for c in tools.search_cases(conn, scene, k=3)]
+        assert len(replies) == len(set(replies)), f"{scene} 返回了重复话术"
+
+
+def test_search_cases_schema_declares_exclude_session():
+    sch = next(s for s in tools.TOOL_SCHEMAS
+               if s["function"]["name"] == "search_cases")
+    assert "exclude_session" in sch["function"]["parameters"]["properties"]
+
+
+def test_draft_ticket_damage_type_cross_checks_ticket_type(conn):
+    """R9：传入图片识别出的语义类型时，用 vision.TICKET_HINT 校验工单类型。"""
+    ok = tools.draft_ticket(conn, "S00001", "补发换货", damage_type="broken_pump")
+    assert ok["图片识别类型"] == "broken_pump"
+    assert ok["图片建议工单类型"] == "补发换货"
+    assert ok["图片与工单类型一致"] is True
+
+    mismatch = tools.draft_ticket(conn, "S00001", "补发换货",
+                                  damage_type="refund_screenshot")
+    assert mismatch["图片建议工单类型"] == "线下打款"
+    assert mismatch["图片与工单类型一致"] is False
+
+    plain = tools.draft_ticket(conn, "S00001", "补发换货")
+    assert "图片识别类型" not in plain, "不传 damage_type 时草稿结构不变"
+
+
+def test_draft_ticket_schema_declares_damage_type():
+    sch = next(s for s in tools.TOOL_SCHEMAS
+               if s["function"]["name"] == "draft_ticket")
+    props = sch["function"]["parameters"]["properties"]
+    assert "damage_type" in props
+    assert "damage_type" not in sch["function"]["parameters"]["required"]
+
+
 def test_draft_ticket_prefills_fields(conn):
     d = tools.draft_ticket(conn, "S00001", "补发换货")
     assert d["会话ID"] == "S00001"

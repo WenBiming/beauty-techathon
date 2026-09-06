@@ -39,12 +39,19 @@ DERIVED_COLUMNS: dict[str, dict[str, str]] = {
         "scene_minor": "TEXT",
         "intent_confidence": "REAL",
         "emotion": "INTEGER",
-        "emotion_trend": "TEXT",
+        "emotion_trend": "TEXT",  # 上升 / 下降 / 持平 / NULL（无上一次会话）
         "risk_tags": "TEXT",  # JSON 数组
-        "suggested_actions": "TEXT",  # JSON 数组
-        "model": "TEXT",
-        "tokens_in": "INTEGER",
+        "suggested_actions": "TEXT",  # JSON 数组（L2 产出）
+        "risk_attribution": "TEXT",  # L2 产出：真实风险归因（spec §5.2 卡片③）
+        "replies": "TEXT",  # JSON 数组 [{"tone":..,"text":..}]（spec §5.2 卡片④）
+        "model": "TEXT",  # JSON 数组：本会话实际用到的模型
+        "tokens_in": "INTEGER",  # L1+L2 合计
         "tokens_out": "INTEGER",
+        # 分层计量：合计列无法还原单价，成本看板要按模型分别查价目表
+        "l1_tokens_in": "TEXT",
+        "l1_tokens_out": "TEXT",
+        "l2_tokens_in": "TEXT",
+        "l2_tokens_out": "TEXT",
         "updated_at": "TEXT",
     },
     "risk_event": {

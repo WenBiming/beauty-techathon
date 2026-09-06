@@ -11,9 +11,11 @@ from dataclasses import dataclass
 
 from agent.llm import LLMClient
 from agent.retrieval import search_similar_cases
+from agent.rules import REDLINE_TICKET_AGE_DAYS
 from agent.tools import list_open_tickets
 from core.clock import reference_now
 from core.timeline import buyer_timeline
+from etl.schema import CLOSED_STATUS
 
 MODEL = "qwen3.7-plus"
 TIMELINE_TAIL = 15
@@ -48,10 +50,13 @@ class L2Result:
     degraded: bool
 
 
-def should_trigger(signals, l1_result) -> bool:
-    """L0 红线 / 情绪低 / 有未闭环工单 / 第 3 次进线 / L1 降级。
+def should_trigger(signals, l1_result, has_overdue_promise: bool = False) -> bool:
+    """L0 红线 / 情绪低 / 有未闭环工单 / 第 3 次进线 / L1 降级 /
+    L1 打出风险标签 / 有逾期承诺（spec §4.4）。
 
     L1 降级也触发：那说明我们看不清这个会话，宁可多花钱也要看清。
+    承诺逾期是本作品自称的差异化能力、也是赛题点名的「隐性服务风险」，
+    这类风险最高的会话反而拿不到深度分析与共情话术，说不过去。
     """
     return bool(
         signals.is_redline
@@ -59,6 +64,8 @@ def should_trigger(signals, l1_result) -> bool:
         or signals.prior_session_count >= 2
         or l1_result.degraded
         or l1_result.emotion <= 2
+        or l1_result.risk_tags
+        or has_overdue_promise
     )
 
 
@@ -72,9 +79,22 @@ def build_context(conn: sqlite3.Connection, session_id: str, signals,
         f"，最长挂起 {signals.max_ticket_age_days} 天",
         f"L1 判定场景：{l1_result.scene_major}/{l1_result.scene_minor}"
         f"，情绪 {l1_result.emotion}/5",
-        "",
-        "【全轨迹（最近事件）】",
     ]
+
+    # I7：红线状态必须写进 prompt。此前 is_redline / has_adverse_reaction 都不在
+    # 上下文里，于是 S00010/S00058/S00082/S00268 因不良反应被送进最贵的模型，
+    # prompt 里却只字未提不良反应工单未闭环。
+    reasons = []
+    if signals.has_adverse_reaction:
+        reasons.append("该买家存在**未闭环的不良反应工单**")
+    if signals.max_ticket_age_days > REDLINE_TICKET_AGE_DAYS:
+        reasons.append(f"存在挂起 {signals.max_ticket_age_days} 天的未完结工单（超期）")
+    lines.append(
+        f"红线会话：{'是' if signals.is_redline else '否'}"
+        + (f"（{'；'.join(reasons)}）" if reasons else "")
+    )
+    lines.append(f"不良反应未闭环：{'是' if signals.has_adverse_reaction else '否'}")
+    lines += ["", "【全轨迹（最近事件）】"]
     for e in events:
         mark = " ⚠未闭环" if e.is_open else ""
         lines.append(f"{e.ts} [{e.kind}] {e.title}：{e.detail}{mark}")
@@ -90,6 +110,21 @@ def build_context(conn: sqlite3.Connection, session_id: str, signals,
         for t in open_tickets:
             lines.append(f"{t['ticket_no']}（{t['table']}）状态 {t['status']}"
                          f"，已挂起 {t['age_days']} 天")
+
+    # list_open_tickets 没有 rules 那套 own_session 豁免，本会话自己产生的
+    # 不良反应工单会被 created > now 过滤掉。红线原因必须逐条落到 prompt 里。
+    if signals.has_adverse_reaction:
+        adverse = conn.execute(
+            "SELECT ticket_no, session_id, symptom, status, created_at"
+            " FROM ticket_adverse WHERE buyer = ? AND status != ?",
+            (signals.buyer, CLOSED_STATUS),
+        ).fetchall()
+        if adverse:
+            lines += ["", "【⚠ 未闭环不良反应工单（红线）】"]
+            for a in adverse:
+                own = "本会话" if a["session_id"] == session_id else a["session_id"]
+                lines.append(f"{a['ticket_no']}（{own}，建单 {a['created_at']}）"
+                             f"状态 {a['status']}：{a['symptom']}")
 
     cases = search_similar_cases(conn, l1_result.scene_minor, k=FEWSHOT_K,
                                  exclude_session=session_id)
