@@ -17,6 +17,7 @@
 - **所有请求必须带 `extra_body={"enable_thinking": False}`**。这批是混合推理模型，开着思考链单会话 token 上升一个数量级，而本任务不需要长推理（spec §2.6）。
 - **意图分类只预测 `scene_minor`（41 类），`scene_major` 由 `scene_map` 表反查**。41→10 是严格 1:1 映射，让模型猜 major 是纯粹的错误来源（spec §4.3）。
 - **测试永不发起真实 API 调用**。全部走 `FixtureClient` 回放。
+- **任何写库的测试必须用隔离的临时库**（`tmp_path_factory` + 全量 ETL，0.3 秒）。连真实 `data/app.db` 做 DELETE/UPDATE 会洗掉批处理产出，M3 依赖这些产出。只读测试可以直连真实库。
 - 密钥从 `.env` 读，绝不入库、绝不打印
 - 数据为虚构 MOCK；对外材料的声明文字不得删改
 - YAGNI：不做向量库、不做模型微调、不做多 Agent 协作、不做流式输出、不做 LangChain 之类框架
@@ -1518,12 +1519,21 @@ from datetime import datetime
 import pytest
 
 from agent import l1, promise, risk, rules
-from etl import db
+from etl import db, derive, loader
 
 
 @pytest.fixture(scope="module")
-def conn():
-    c = db.connect()
+def conn(tmp_path_factory):
+    """写库的测试必须用隔离的临时库。
+
+    连真实 data/app.db 会让 DELETE/UPDATE 洗掉批处理产出——实测发生过：
+    跑完全量后再跑一次 pytest，promise 从 181 行掉到 2 行、risk_event 清零。
+    ETL 全量重建仅 0.3 秒，module 作用域下每个测试文件只付一次。
+    """
+    c = db.connect(tmp_path_factory.mktemp("db") / "t.db")
+    db.create_tables(c)
+    loader.load_raw_tables(c)
+    derive.build_all(c)
     yield c
     c.close()
 
@@ -1762,12 +1772,21 @@ import json
 import pytest
 
 from agent import tools
-from etl import db
+from etl import db, derive, loader
 
 
 @pytest.fixture(scope="module")
-def conn():
-    c = db.connect()
+def conn(tmp_path_factory):
+    """写库的测试必须用隔离的临时库。
+
+    连真实 data/app.db 会让 DELETE/UPDATE 洗掉批处理产出——实测发生过：
+    跑完全量后再跑一次 pytest，promise 从 181 行掉到 2 行、risk_event 清零。
+    ETL 全量重建仅 0.3 秒，module 作用域下每个测试文件只付一次。
+    """
+    c = db.connect(tmp_path_factory.mktemp("db") / "t.db")
+    db.create_tables(c)
+    loader.load_raw_tables(c)
+    derive.build_all(c)
     yield c
     c.close()
 
@@ -2316,12 +2335,21 @@ import json
 import pytest
 
 from agent import llm, pipeline
-from etl import db
+from etl import db, derive, loader
 
 
 @pytest.fixture(scope="module")
-def conn():
-    c = db.connect()
+def conn(tmp_path_factory):
+    """写库的测试必须用隔离的临时库。
+
+    连真实 data/app.db 会让 DELETE/UPDATE 洗掉批处理产出——实测发生过：
+    跑完全量后再跑一次 pytest，promise 从 181 行掉到 2 行、risk_event 清零。
+    ETL 全量重建仅 0.3 秒，module 作用域下每个测试文件只付一次。
+    """
+    c = db.connect(tmp_path_factory.mktemp("db") / "t.db")
+    db.create_tables(c)
+    loader.load_raw_tables(c)
+    derive.build_all(c)
     yield c
     c.close()
 
