@@ -468,6 +468,23 @@ def test_check_session_empty_when_no_replies(conn):
     assert compliance.check_session(conn, sid["session_id"]) == []
 
 
+def test_known_identifiers_works_on_in_memory_db():
+    """内存库上也必须能查出标识符——另开连接的实现会在这里静默返回空集合。"""
+    import sqlite3 as _sq
+
+    from etl import derive, loader
+
+    mem = _sq.connect(":memory:")
+    mem.row_factory = _sq.Row
+    db.create_tables(mem)
+    loader.load_raw_tables(mem)
+    derive.build_all(mem)
+    try:
+        assert len(compliance.known_identifiers(mem)) == 335
+    finally:
+        mem.close()
+
+
 def test_does_not_import_llm():
     """合规校验必须是确定性的，不得依赖模型。"""
     import inspect
@@ -506,7 +523,6 @@ import json
 import re
 import sqlite3
 from dataclasses import dataclass
-from functools import lru_cache
 
 from etl.schema import TICKET_TABLES
 
@@ -560,33 +576,43 @@ class ComplianceReport:
         return any(i.severity == SEV_BLOCK for i in self.issues)
 
 
-@lru_cache(maxsize=4)
-def _identifiers_for(db_path: str) -> frozenset[str]:
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    try:
-        ids: set[str] = set()
-        for r in conn.execute("SELECT order_no, tracking_no FROM orders"):
-            ids.add(r["order_no"])
-            if r["tracking_no"]:
-                ids.add(r["tracking_no"])
-        for table in TICKET_TABLES:
-            cols = {c[1] for c in conn.execute(f"PRAGMA table_info({table})")}
-            for r in conn.execute(f"SELECT * FROM {table}"):
-                ids.add(r["ticket_no"])
-                for col in ("tracking_no", "orig_tracking_no",
-                            "reissue_tracking_no"):
-                    if col in cols and r[col]:
-                        ids.add(r[col])
-        return frozenset(i for i in ids if i)
-    finally:
-        conn.close()
+# 按库文件路径缓存。**不要改成另开一条连接去查**——若传入内存库，
+# PRAGMA database_list 返回空路径，sqlite3.connect("") 会建一个全新的空库，
+# known_identifiers 静默返回空集合，校验器变成永不报错的空壳，且没有任何
+# 测试会失败。一律用传入的 conn 直查。
+_ID_CACHE: dict[str, frozenset[str]] = {}
+
+
+def _collect_identifiers(conn: sqlite3.Connection) -> frozenset[str]:
+    ids: set[str] = set()
+    for r in conn.execute("SELECT order_no, tracking_no FROM orders"):
+        ids.add(r["order_no"])
+        if r["tracking_no"]:
+            ids.add(r["tracking_no"])
+    for table in TICKET_TABLES:
+        cols = {c[1] for c in conn.execute(f"PRAGMA table_info({table})")}
+        for r in conn.execute(f"SELECT * FROM {table}"):
+            ids.add(r["ticket_no"])
+            for col in ("tracking_no", "orig_tracking_no",
+                        "reissue_tracking_no"):
+                if col in cols and r[col]:
+                    ids.add(r[col])
+    return frozenset(i for i in ids if i)
 
 
 def known_identifiers(conn: sqlite3.Connection) -> frozenset[str]:
-    """库内全部真实订单号/物流号/工单号。按库文件路径缓存。"""
+    """库内全部真实订单号/物流号/工单号。用传入的 conn 直查，按库路径缓存。
+
+    标识符来自原表，只有重跑 ETL 才会变，所以进程内缓存是安全的。
+    路径为空（内存库）时不缓存，每次直查。
+    """
     row = conn.execute("PRAGMA database_list").fetchone()
-    return _identifiers_for(row[2])
+    path = row[2] if row is not None else ""
+    if not path:
+        return _collect_identifiers(conn)
+    if path not in _ID_CACHE:
+        _ID_CACHE[path] = _collect_identifiers(conn)
+    return _ID_CACHE[path]
 
 
 def check_reply(conn: sqlite3.Connection, session_id: str, tone: str,
@@ -638,7 +664,7 @@ def check_session(conn: sqlite3.Connection,
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `.venv/bin/python -m pytest tests/test_compliance.py -v`
-Expected: 13 passed
+Expected: 14 passed
 
 > `_PROMISE` 正则里的 `(?:...)` 是非捕获组——`findall` 遇到捕获组会只返回组内容而不是整个匹配，那样 `excerpt` 就不对了。若 `test_new_promise_is_info_and_extracted` 断言 `"48小时内" in excerpt` 失败，先检查这一点。
 
