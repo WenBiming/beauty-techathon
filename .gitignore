@@ -15,3 +15,6 @@ data/raw/*.xlsx
 
 # 交付物中间文件
 deliverables/*.mp4
+
+# 个人求职材料，不入库（已移至 ~/dev/beauty-techathon-private/）
+docs/resume-interview-prep.md
