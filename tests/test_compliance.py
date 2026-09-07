@@ -83,6 +83,13 @@ def test_invented_agent_title_is_warning(conn):
     assert h and "主管" in h[0].excerpt
 
 
+def test_third_party_title_is_not_flagged(conn):
+    """客服说「我联系了仓库主管」是合理信息，不是自称身份，不该报警。"""
+    r = compliance.check_reply(
+        conn, "S00099", "专业", "我已联系仓库主管为您单独锁定库存，并上报给仓储经理加急。")
+    assert [i for i in r.issues if i.kind == compliance.KIND_HONORIFIC] == []
+
+
 def test_new_promise_is_info_and_extracted(conn):
     r = compliance.check_reply(
         conn, "S00099", "专业", "您的订单我已加急标记，48小时内一定发出。")
