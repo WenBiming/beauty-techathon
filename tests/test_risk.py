@@ -151,9 +151,9 @@ def test_repeat_refund_risk_generated(conn):
 def test_persist_is_idempotent(conn):
     sig = rules.compute_all(conn)
     events = risk.detect(conn, sig, {k: _l1(k) for k in sig}, [])
-    first = risk.persist(conn, events)
+    first = risk.persist(conn, events, "2026-09-07T00:00:00Z")
     before = conn.execute("SELECT COUNT(*) c FROM risk_event").fetchone()["c"]
-    risk.persist(conn, events)
+    risk.persist(conn, events, "2026-09-07T00:00:00Z")
     after = conn.execute("SELECT COUNT(*) c FROM risk_event").fetchone()["c"]
     assert first == len(events)
     assert before == after
@@ -171,7 +171,7 @@ def test_persist_preserves_supervisor_state(conn):
     """
     sig = rules.compute_all(conn)
     events = risk.detect(conn, sig, {k: _l1(k) for k in sig}, [])
-    risk.persist(conn, events)
+    risk.persist(conn, events, "2026-09-07T00:00:00Z")
 
     target = conn.execute(
         "SELECT id, risk_type, session_id, detected_by, created_at"
@@ -182,7 +182,7 @@ def test_persist_preserves_supervisor_state(conn):
     )
     conn.commit()
 
-    risk.persist(conn, events)          # 主管标记之后再重算一次
+    risk.persist(conn, events, "2026-09-07T00:00:00Z")          # 主管标记之后再重算一次
 
     row = conn.execute(
         "SELECT * FROM risk_event WHERE risk_type = ? AND session_id = ?"

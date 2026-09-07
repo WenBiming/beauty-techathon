@@ -68,6 +68,7 @@ DERIVED_COLUMNS: dict[str, dict[str, str]] = {
         "detail": "TEXT",
         "created_at": "TEXT",
         "updated_at": "TEXT",
+        "last_batch_at": "TEXT",
     },
     "promise": {
         "id": "INTEGER PRIMARY KEY AUTOINCREMENT",
@@ -81,6 +82,7 @@ DERIVED_COLUMNS: dict[str, dict[str, str]] = {
         "ticket_no": "TEXT",
         "closed": "INTEGER NOT NULL DEFAULT 0",
         "overdue": "INTEGER NOT NULL DEFAULT 0",
+        "last_batch_at": "TEXT",
     },
 }
 

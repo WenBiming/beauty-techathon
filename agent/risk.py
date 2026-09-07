@@ -115,7 +115,8 @@ def detect(conn: sqlite3.Connection, signals: dict, l1_results: dict,
     return out
 
 
-def persist(conn: sqlite3.Connection, events: list[RiskEvent]) -> int:
+def persist(conn: sqlite3.Connection, events: list[RiskEvent],
+            batch_at: str) -> int:
     """幂等写入。**必须是 upsert 而不是 INSERT OR REPLACE**（C1）。
 
     REPLACE 的语义是「删冲突行再插入」，会把主管在看板上标的 status='已闭环'、
@@ -125,20 +126,24 @@ def persist(conn: sqlite3.Connection, events: list[RiskEvent]) -> int:
 
     所以只更新会随重算变化的字段（level / ticket_no / detail / updated_at），
     status / handler / created_at / id 一律不动。
+
+    batch_at 标记本行属于哪一批批处理。上一批留下、本批条件已不成立的行
+    不会被清理——不能用 DELETE（同样是 C1 要避免的），靠这个戳过滤陈旧行。
     """
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     conn.executemany(
         "INSERT INTO risk_event"
         " (risk_type, level, session_id, buyer, ticket_no, detected_by,"
-        "  status, handler, detail, created_at, updated_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, '待处理', NULL, ?, ?, ?)"
+        "  status, handler, detail, created_at, updated_at, last_batch_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, '待处理', NULL, ?, ?, ?, ?)"
         " ON CONFLICT(risk_type, session_id, detected_by) DO UPDATE SET"
         "     level = excluded.level,"
         "     ticket_no = excluded.ticket_no,"
         "     detail = excluded.detail,"
-        "     updated_at = excluded.updated_at",
+        "     updated_at = excluded.updated_at,"
+        "     last_batch_at = excluded.last_batch_at",
         [(e.risk_type, e.level, e.session_id, e.buyer, e.ticket_no,
-          e.detected_by, e.detail, now, now) for e in events],
+          e.detected_by, e.detail, now, now, batch_at) for e in events],
     )
     conn.commit()
     return len(events)

@@ -161,11 +161,24 @@ def _backfill_emotion_trend(conn: sqlite3.Connection, session_ids: list[str],
     return filled
 
 
+def current_batch_at(conn: sqlite3.Connection) -> str | None:
+    """库内最新的批次戳。看板按它过滤，避免统计到陈旧行。"""
+    stamps = []
+    for table in ("promise", "risk_event"):
+        row = conn.execute(
+            f"SELECT MAX(last_batch_at) m FROM {table}").fetchone()
+        if row is not None and row["m"]:
+            stamps.append(row["m"])
+    return max(stamps) if stamps else None
+
+
 def run_batch(conn: sqlite3.Connection, client,
               session_ids: list[str] | None = None) -> BatchReport:
     if session_ids is None:
         session_ids = [r["session_id"] for r in conn.execute(
             "SELECT DISTINCT session_id FROM chat ORDER BY session_id")]
+
+    batch_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     l0 = LayerCost("L0")
     l1c = LayerCost("L1")
@@ -213,9 +226,10 @@ def run_batch(conn: sqlite3.Connection, client,
     conn.executemany(
         "INSERT OR REPLACE INTO promise (message_id, session_id, buyer,"
         " promise_text, promise_type, made_at, deadline_at, ticket_no,"
-        " closed, overdue) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        " closed, overdue, last_batch_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         [(p.message_id, p.session_id, p.buyer, p.promise_text, p.promise_type,
-          p.made_at, p.deadline_at, p.ticket_no, int(p.closed), int(p.overdue))
+          p.made_at, p.deadline_at, p.ticket_no, int(p.closed), int(p.overdue),
+          batch_at)
          for p in all_promises],
     )
     conn.commit()
@@ -225,7 +239,7 @@ def run_batch(conn: sqlite3.Connection, client,
     report.overdue_promise_count = sum(1 for p in all_promises if p.overdue)
 
     events = risk.detect(conn, signals, l1_results, all_promises)
-    report.risk_event_count = risk.persist(conn, events)
+    report.risk_event_count = risk.persist(conn, events, batch_at)
     _persist_buyer_risk_level(conn)
     return report
 
