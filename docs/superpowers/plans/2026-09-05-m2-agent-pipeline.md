@@ -3076,6 +3076,25 @@ git commit -m "feat(agent): 多模态图片分析，按需触发 qwen3-vl-flash"
 > **注意**：若给 `buyer_profile` 加列或改列，必须同步 `etl/db.py` 的 `DERIVED_COLUMNS` 与
 > `etl/derive.py` 的 INSERT——该表是整表 DELETE 重建的，漏改会被静默清空（M1 契约）。
 
+## ⚠️ M3 必须先处理的前置项：陈旧行累积
+
+`promise` 与 `risk_event` 是**只增不删**语义——为了保住主管在看板上的处置标记（`status`/`handler`），`risk.persist` 特意从 `INSERT OR REPLACE` 改成了 upsert（裁决 C1）。代价是：**上一次批处理留下、但本次条件已不成立的行不会被清理。**
+
+实测（2026-09-07 全量重跑后）：
+
+| 表 | 表内行数 | 本次批处理产出 | 陈旧行 |
+|---|---|---|---|
+| `promise` | 221 | 172 | ~49 |
+| `risk_event` | 129 | 133 事件（去重后更少） | 4 行来自 09-06 那次运行 |
+
+**后果**：`promise` 表里 `overdue=1` 有 65 条，而本次产出的「承诺逾期」风险事件只有 52 条。**看板若直接 `SELECT COUNT(*)` 会得到过期数字。**
+
+**根因**：唯一键是 `(message_id, promise_text)`，而 L1 每次运行对同一条消息抽出的承诺原文会有细微差异（`temperature=0.1` 下仍有非确定性），于是老行与新行共存。
+
+**修法约束**：不能简单 `DELETE` 后重灌——那正是 C1 要避免的（会洗掉主管标记）。正确做法是加一个 `last_batch_at` 或 `batch_id` 列，`persist` 时刷新，看板按最新批次过滤；陈旧行保留但不计入统计，主管标记也不丢。
+
+**临时绕过**：跑批前手工 `DELETE FROM promise` / `DELETE FROM risk_event`（会丢主管标记，仅适用于尚无人工处置的开发期）。
+
 ## 交给 M3 的接口
 
 | 接口 | 用途 |
