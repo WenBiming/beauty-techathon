@@ -1,6 +1,0 @@
-{
-  "text": "{\"scene_minor\":\"包裹少件\",\"confidence\":0.95,\"emotion\":1,\"summary\":\"买家称收到空箱要求仅退款，客服引导举证核实漏发情况。\",\"risk_tags\":[\"疑似恶意仅退款\",\"情绪激动\",\"投诉风险\"],\"promises\":[{\"text\":\"有结果第一时间联系您\",\"amount\":null,\"unit\":null},{\"text\":\"若核实确为漏发，一定第一时间给您补发或退款\",\"amount\":null,\"unit\":null}]}",
-  "model": "qwen3.8-flash",
-  "tokens_in": 718,
-  "tokens_out": 98
-}

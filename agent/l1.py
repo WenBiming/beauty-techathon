@@ -28,6 +28,7 @@ class L1Result:
     emotion: int
     summary: str
     risk_tags: list[str]
+    high_risk: bool
     promises: list[RawPromise]
     model: str
     tokens_in: int
@@ -56,6 +57,9 @@ def parse_payload(conn: sqlite3.Connection, text: str) -> dict:
     emotion = data.get("emotion")
     if not isinstance(emotion, int) or not 1 <= emotion <= 5:
         raise ValueError(f"emotion 必须是 1-5 的整数，得到 {emotion!r}")
+    high_risk = data.get("high_risk")
+    if not isinstance(high_risk, bool):
+        raise ValueError(f"high_risk 必须是布尔值，得到 {high_risk!r}")
     if not isinstance(data.get("promises", []), list):
         raise ValueError("promises 必须是数组")
     return data
@@ -102,6 +106,7 @@ def analyse(conn: sqlite3.Connection, client: LLMClient, session_id: str, *,
             emotion=int(data["emotion"]),
             summary=str(data.get("summary", "")).strip(),
             risk_tags=[str(t) for t in data.get("risk_tags", [])],
+            high_risk=bool(data["high_risk"]),
             promises=_to_raw_promises(data.get("promises", [])),
             model=MODEL, tokens_in=tokens_in, tokens_out=tokens_out, degraded=False,
         )
@@ -109,6 +114,7 @@ def analyse(conn: sqlite3.Connection, client: LLMClient, session_id: str, *,
     return L1Result(
         session_id=session_id, scene_minor="", scene_major="", confidence=0.0,
         emotion=3, summary=f"L1 解析失败降级：{last_error}", risk_tags=[],
+        high_risk=False,
         promises=[], model=MODEL, tokens_in=tokens_in, tokens_out=tokens_out,
         degraded=True,
     )

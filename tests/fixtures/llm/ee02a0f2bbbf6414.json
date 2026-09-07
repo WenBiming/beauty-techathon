@@ -1,0 +1,6 @@
+{
+  "text": "{\"scene_minor\":\"售后期关闭过敏退款\",\"confidence\":0.95,\"emotion\":4,\"summary\":\"售后期过无法原路退，客服线下打款解决\",\"risk_tags\":[\"线下打款流程\",\"超期售后特批\"],\"high_risk\":false,\"promises\":[{\"text\":\"审核通过后1-3个工作日到账\",\"amount\":3,\"unit\":\"business_day\"}]}",
+  "model": "qwen3.8-flash",
+  "tokens_in": 794,
+  "tokens_out": 80
+}

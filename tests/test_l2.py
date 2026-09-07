@@ -24,9 +24,10 @@ class StubClient:
                                tokens_in=500, tokens_out=200)
 
 
-def _l1(sid, emotion=3, minor="催发货", major="物流服务"):
+def _l1(sid, emotion=3, minor="催发货", major="物流服务", high_risk=False):
     return l1.L1Result(session_id=sid, scene_minor=minor, scene_major=major,
                        confidence=0.9, emotion=emotion, summary="s", risk_tags=[],
+                       high_risk=high_risk,
                        promises=[], model="qwen3.8-flash", tokens_in=0, tokens_out=0,
                        degraded=False)
 
@@ -63,6 +64,7 @@ def test_degraded_l1_still_triggers(conn):
     """L1 降级说明我们看不清这个会话，宁可多花钱也要看清。"""
     bad = l1.L1Result(session_id="S00002", scene_minor="", scene_major="",
                       confidence=0.0, emotion=3, summary="", risk_tags=[],
+                      high_risk=False,
                       promises=[], model="qwen3.8-flash", tokens_in=0,
                       tokens_out=0, degraded=True)
     assert l2.should_trigger(rules.compute(conn, "S00002"), bad) is True
@@ -77,15 +79,35 @@ def test_overdue_promise_triggers(conn):
                              has_overdue_promise=True) is True
 
 
-def test_l1_risk_tags_trigger(conn):
-    """risk_tags 存了但此前无人读——L1 明说有风险却不升级，说不过去（I4）。"""
+def test_high_risk_triggers(conn):
+    """L1 显式判定 high_risk=True 必须单独触发 L2，不依赖其他任何条件。"""
+    s = rules.compute(conn, "S00002")            # 普通首次进线，本来不触发
+    calm = l1.L1Result(session_id="S00002", scene_minor="催发货",
+                       scene_major="物流服务", confidence=0.9, emotion=4,
+                       summary="s", risk_tags=[], high_risk=False, promises=[],
+                       model="qwen3.8-flash", tokens_in=0, tokens_out=0,
+                       degraded=False)
+    assert l2.should_trigger(s, calm) is False
+    risky = l1.L1Result(session_id="S00002", scene_minor="催发货",
+                        scene_major="物流服务", confidence=0.9, emotion=4,
+                        summary="s", risk_tags=[], high_risk=True, promises=[],
+                        model="qwen3.8-flash", tokens_in=0, tokens_out=0,
+                        degraded=False)
+    assert l2.should_trigger(s, risky) is True
+
+
+def test_risk_tags_alone_do_not_trigger(conn):
+    """本次修复的核心：risk_tags 是给人工看的自由标签，「物流异常」「赠品
+    缺失」这类日常运营标签也会落进去。非空 risk_tags 但 high_risk=False
+    绝不能触发 L2——否则又退回到把日常售后错误升级到最贵模型的老问题。"""
     s = rules.compute(conn, "S00002")
     tagged = l1.L1Result(session_id="S00002", scene_minor="催发货",
                          scene_major="物流服务", confidence=0.9, emotion=4,
-                         summary="s", risk_tags=["时效风险"], promises=[],
+                         summary="s", risk_tags=["物流异常", "赠品缺失"],
+                         high_risk=False, promises=[],
                          model="qwen3.8-flash", tokens_in=0, tokens_out=0,
                          degraded=False)
-    assert l2.should_trigger(s, tagged) is True
+    assert l2.should_trigger(s, tagged) is False
 
 
 def test_context_states_redline_and_adverse_reaction(conn):

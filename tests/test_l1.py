@@ -29,6 +29,7 @@ class StubClient:
 GOOD = json.dumps({
     "scene_minor": "退款迟迟不到账", "confidence": 0.9, "emotion": 2,
     "summary": "买家反馈退款一周未到账", "risk_tags": ["退款时效投诉风险"],
+    "high_risk": False,
     "promises": [{"text": "若3个工作日内仍未到账，我们走线下打款直接补给您",
                   "amount": 3, "unit": "business_day"}],
 }, ensure_ascii=False)
@@ -59,6 +60,7 @@ def test_analyse_happy_path(conn):
     assert r.scene_minor == "退款迟迟不到账"
     assert r.scene_major == "订单服务"          # 由 scene_map 反查，非模型输出
     assert r.emotion == 2
+    assert r.high_risk is False
     assert r.degraded is False
     assert r.tokens_in == 100 and r.tokens_out == 20
     assert len(r.promises) == 1
@@ -85,13 +87,15 @@ def test_analyse_degrades_after_second_failure(conn):
     assert r.degraded is True
     assert r.scene_minor == ""
     assert r.emotion == 3                        # 降级为中性
+    assert r.high_risk is False                   # 降级为保守值
     assert r.promises == []
     assert len(c.calls) == 2
 
 
 def test_unknown_scene_minor_is_rejected(conn):
     bad = json.dumps({"scene_minor": "我编的场景", "confidence": 0.9, "emotion": 3,
-                      "summary": "x", "risk_tags": [], "promises": []},
+                      "summary": "x", "risk_tags": [], "high_risk": False,
+                      "promises": []},
                      ensure_ascii=False)
     c = StubClient(bad, bad)
     r = l1.analyse(conn, c, "S00005")
@@ -100,7 +104,25 @@ def test_unknown_scene_minor_is_rejected(conn):
 
 def test_emotion_out_of_range_is_rejected(conn):
     bad = json.dumps({"scene_minor": "退款迟迟不到账", "confidence": 0.9, "emotion": 9,
-                      "summary": "x", "risk_tags": [], "promises": []},
+                      "summary": "x", "risk_tags": [], "high_risk": False,
+                      "promises": []},
                      ensure_ascii=False)
     r = l1.analyse(conn, StubClient(bad, bad), "S00005")
     assert r.degraded is True
+
+
+def test_high_risk_missing_or_wrong_type_is_rejected(conn):
+    """high_risk 缺失或类型不对必须判为解析失败，与 emotion 的校验一样严——
+    这是本次修复引入的字段，容不得模型偷懒不填或填错类型。"""
+    missing = json.dumps({"scene_minor": "退款迟迟不到账", "confidence": 0.9,
+                          "emotion": 3, "summary": "x", "risk_tags": [],
+                          "promises": []}, ensure_ascii=False)
+    r = l1.analyse(conn, StubClient(missing, missing), "S00005")
+    assert r.degraded is True, "缺 high_risk 必须判为解析失败"
+
+    wrong_type = json.dumps({"scene_minor": "退款迟迟不到账", "confidence": 0.9,
+                             "emotion": 3, "summary": "x", "risk_tags": [],
+                             "high_risk": "是", "promises": []},
+                            ensure_ascii=False)
+    r2 = l1.analyse(conn, StubClient(wrong_type, wrong_type), "S00005")
+    assert r2.degraded is True, "high_risk 类型不对必须判为解析失败"

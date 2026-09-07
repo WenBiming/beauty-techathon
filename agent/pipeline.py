@@ -64,12 +64,13 @@ def _persist_summary(conn: sqlite3.Connection, r1, r2) -> None:
     conn.execute(
         "INSERT OR REPLACE INTO session_summary"
         " (session_id, summary, scene_major, scene_minor, intent_confidence,"
-        "  emotion, emotion_trend, risk_tags, suggested_actions,"
+        "  emotion, emotion_trend, risk_tags, high_risk, suggested_actions,"
         "  risk_attribution, replies, model, tokens_in, tokens_out,"
         "  l1_tokens_in, l1_tokens_out, l2_tokens_in, l2_tokens_out, updated_at)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (r1.session_id, r1.summary, r1.scene_major, r1.scene_minor, r1.confidence,
          r1.emotion, None, json.dumps(r1.risk_tags, ensure_ascii=False),
+         json.dumps(r1.high_risk),
          json.dumps(actions, ensure_ascii=False),
          r2.risk_attribution if r2 is not None else None,
          json.dumps(replies, ensure_ascii=False),

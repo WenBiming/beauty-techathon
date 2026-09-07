@@ -27,6 +27,7 @@ def conn(tmp_path_factory):
 def _l1(session_id, emotion=3, minor="催发货", major="物流服务"):
     return l1.L1Result(session_id=session_id, scene_minor=minor, scene_major=major,
                        confidence=0.9, emotion=emotion, summary="s", risk_tags=[],
+                       high_risk=False,
                        promises=[], model="qwen3.8-flash", tokens_in=0, tokens_out=0,
                        degraded=False)
 

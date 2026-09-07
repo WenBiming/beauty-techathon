@@ -1,0 +1,6 @@
+{
+  "text": "{\"scene_minor\":\"退款迟迟不到账\",\"confidence\":0.98,\"emotion\":2,\"summary\":\"买家催问原路退回款项一周未到账，客服承诺核实及补打款。\",\"risk_tags\":[\"退款时效投诉\",\"资金安全担忧\"],\"high_risk\":false,\"promises\":[{\"text\":\"若3个工作日内仍未到账，我们走线下打款直接补给您\",\"amount\":3,\"unit\":\"business_day\"}]}",
+  "model": "qwen3.8-flash",
+  "tokens_in": 764,
+  "tokens_out": 89
+}

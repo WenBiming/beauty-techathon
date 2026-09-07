@@ -52,11 +52,16 @@ class L2Result:
 
 def should_trigger(signals, l1_result, has_overdue_promise: bool = False) -> bool:
     """L0 红线 / 情绪低 / 有未闭环工单 / 第 3 次进线 / L1 降级 /
-    L1 打出风险标签 / 有逾期承诺（spec §4.4）。
+    L1 判定 high_risk / 有逾期承诺（spec §4.4）。
 
     L1 降级也触发：那说明我们看不清这个会话，宁可多花钱也要看清。
     承诺逾期是本作品自称的差异化能力、也是赛题点名的「隐性服务风险」，
     这类风险最高的会话反而拿不到深度分析与共情话术，说不过去。
+
+    high_risk 是 L1 输出 schema 里显式的布尔字段（判定标准见
+    prompts.py），不是 risk_tags——risk_tags 是给人工客服看的自由标签，
+    「物流异常」「赠品缺失」这类日常运营标签也会出现在里面，用
+    bool(risk_tags) 当高风险判据会把常规售后错误地升级到最贵的模型。
     """
     return bool(
         signals.is_redline
@@ -64,7 +69,7 @@ def should_trigger(signals, l1_result, has_overdue_promise: bool = False) -> boo
         or signals.prior_session_count >= 2
         or l1_result.degraded
         or l1_result.emotion <= 2
-        or l1_result.risk_tags
+        or l1_result.high_risk
         or has_overdue_promise
     )
 

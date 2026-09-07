@@ -1,6 +1,0 @@
-{
-  "text": "{\"scene_minor\":\"催发货\",\"confidence\":0.98,\"emotion\":3,\"summary\":\"买家催促洗发水发货，客服承诺48小时内发出并加急处理。\",\"risk_tags\":[],\"promises\":[{\"text\":\"您的订单预计48小时内发出\",\"amount\":48,\"unit\":\"hour\"},{\"text\":\"已为您加急标记\",\"amount\":null,\"unit\":null}]}",
-  "model": "qwen3.8-flash",
-  "tokens_in": 626,
-  "tokens_out": 80
-}

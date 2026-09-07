@@ -24,7 +24,7 @@ def conn(tmp_path_factory):
 
 L1_OK = json.dumps({
     "scene_minor": "催发货", "confidence": 0.9, "emotion": 2, "summary": "买家催发货",
-    "risk_tags": ["时效风险"],
+    "risk_tags": ["时效风险"], "high_risk": False,
     "promises": [{"text": "您的订单预计48小时内发出", "amount": 48, "unit": "hour"}],
 }, ensure_ascii=False)
 
@@ -126,7 +126,8 @@ def test_session_without_l2_writes_empty_replies(conn):
             self.calls[model] += 1
             return llm.LLMResponse(json.dumps({
                 "scene_minor": "催发货", "confidence": 0.9, "emotion": 5,
-                "summary": "平静", "risk_tags": [], "promises": [],
+                "summary": "平静", "risk_tags": [], "high_risk": False,
+                "promises": [],
             }, ensure_ascii=False), model, 500, 60)
 
     c = CalmClient()
@@ -179,7 +180,7 @@ def test_emotion_trend_backfilled_against_prior_session(conn):
             emotion = self.emotions[self.calls[model] - 1]
             return llm.LLMResponse(json.dumps({
                 "scene_minor": "催发货", "confidence": 0.9, "emotion": emotion,
-                "summary": "s", "risk_tags": [], "promises": [],
+                "summary": "s", "risk_tags": [], "high_risk": False, "promises": [],
             }, ensure_ascii=False), model, 500, 60)
 
     ids = ["S00005", "S00059", "S00099"]        # 同一买家，时间递增

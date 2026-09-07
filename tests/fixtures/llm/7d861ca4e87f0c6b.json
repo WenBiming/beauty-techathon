@@ -1,6 +1,0 @@
-{
-  "text": "{\"scene_minor\":\"退款迟迟不到账\",\"confidence\":0.98,\"emotion\":2,\"summary\":\"买家催问原路退回未到账，客服承诺3日内核实否则线下补款\",\"risk_tags\":[\"资金延迟风险\",\"承诺兑现压力\"],\"promises\":[{\"text\":\"若3个工作日内仍未到账，我们走线下打款直接补给您\",\"amount\":3,\"unit\":\"business_day\"}]}",
-  "model": "qwen3.8-flash",
-  "tokens_in": 622,
-  "tokens_out": 82
-}

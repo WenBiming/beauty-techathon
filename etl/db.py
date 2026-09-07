@@ -41,6 +41,7 @@ DERIVED_COLUMNS: dict[str, dict[str, str]] = {
         "emotion": "INTEGER",
         "emotion_trend": "TEXT",  # 上升 / 下降 / 持平 / NULL（无上一次会话）
         "risk_tags": "TEXT",  # JSON 数组
+        "high_risk": "TEXT",  # L1 显式判定的高风险布尔值（JSON true/false），驱动 L2 触发
         "suggested_actions": "TEXT",  # JSON 数组（L2 产出）
         "risk_attribution": "TEXT",  # L2 产出：真实风险归因（spec §5.2 卡片③）
         "replies": "TEXT",  # JSON 数组 [{"tone":..,"text":..}]（spec §5.2 卡片④）
