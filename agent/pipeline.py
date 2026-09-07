@@ -13,6 +13,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from agent import compliance
 from agent import l1 as l1_mod
 from agent import l2 as l2_mod
 from agent import llm, promise, risk, rules
@@ -43,6 +44,10 @@ class BatchReport:
     hard_promise_count: int = 0
     overdue_promise_count: int = 0
     risk_event_count: int = 0
+    replies_total: int = 0
+    replies_blocked: int = 0
+    replies_warned: int = 0
+    replies_with_promise: int = 0
     layers: list[LayerCost] = field(default_factory=list)
 
 
@@ -241,6 +246,20 @@ def run_batch(conn: sqlite3.Connection, client,
     events = risk.detect(conn, signals, l1_results, all_promises)
     report.risk_event_count = risk.persist(conn, events, batch_at)
     _persist_buyer_risk_level(conn)
+
+    # 话术合规统计（Task 3）：提示词加固是第一道防线，这是第二道——
+    # 对本批次每个会话已落库的候选话术跑一遍确定性校验并累加，量化
+    # 「AI 只建议不发送」这条铁律，而不是只在提示词里空口白话。
+    for sid in session_ids:
+        for cr in compliance.check_session(conn, sid):
+            report.replies_total += 1
+            if cr.blocked:
+                report.replies_blocked += 1
+            if any(i.severity == compliance.SEV_WARN for i in cr.issues):
+                report.replies_warned += 1
+            if any(i.kind == compliance.KIND_NEW_PROMISE for i in cr.issues):
+                report.replies_with_promise += 1
+
     return report
 
 
@@ -260,6 +279,12 @@ def format_report(report: BatchReport,
                      f"{l.tokens_in:>11} {l.tokens_out:>11} {l.tokens:>11}")
     total = sum(l.tokens for l in report.layers)
     lines.append(f"{'合计':<9} {'':>4} {'':>6} {'':>11} {'':>11} {total:>11}")
+
+    lines.append(
+        f"\n话术合规：共 {report.replies_total} 条 | 阻断 {report.replies_blocked}"
+        f"（编造单号）| 警告 {report.replies_warned}（编造称谓）"
+        f"| 含新承诺 {report.replies_with_promise}"
+    )
 
     if not prices:
         lines.append("\n（未提供单价，仅报 token。金额按运行当日官方价目表另算。）")

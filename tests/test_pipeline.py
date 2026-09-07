@@ -318,3 +318,28 @@ def test_main_without_price_reports_tokens_only(conn, monkeypatch, capsys):
 
     assert pipeline.main(["--sessions", "S00099"]) == 0
     assert "¥" not in capsys.readouterr().out
+
+
+def test_batch_report_counts_compliance(conn):
+    """批处理报告要给出话术合规统计——这是本作品「AI 只建议不发送」铁律的量化。"""
+    r = pipeline.run_batch(conn, RoutingClient(), ["S00005", "S00099"])
+    assert r.replies_total > 0
+    assert r.replies_blocked >= 0
+    assert r.replies_warned >= 0
+    assert r.replies_with_promise >= 0
+    assert r.replies_blocked <= r.replies_total
+
+
+def test_format_report_includes_compliance_section(conn):
+    r = pipeline.run_batch(conn, RoutingClient(), ["S00099"])
+    text = pipeline.format_report(r)
+    assert "话术合规" in text
+    assert "阻断" in text
+
+
+def test_l2_system_prompt_forbids_fabrication():
+    """加固条款必须在提示词里，否则模型没有约束。"""
+    from agent import l2
+
+    for must in ("禁止编造", "女士", "主管", "单号"):
+        assert must in l2.SYSTEM, f"L2 提示词缺少约束: {must}"
