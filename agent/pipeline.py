@@ -167,7 +167,28 @@ def _backfill_emotion_trend(conn: sqlite3.Connection, session_ids: list[str],
 
 
 def current_batch_at(conn: sqlite3.Connection) -> str | None:
-    """库内最新的批次戳。看板按它过滤，避免统计到陈旧行。"""
+    """库内最新的批次戳（promise / risk_event 两表取较大者）。看板按它过滤陈旧行。
+
+    **契约：返回 `None` 表示库内尚无任何批次戳**（例如批处理还没在本库上跑过——
+    出厂的 data/app.db 就是这样，221 条承诺与 129 条风险事件的 last_batch_at
+    全为 NULL）。**调用方此时应当不做批次过滤、退回全表**，而不是拿 `None`
+    去比较：SQL 里 `= NULL` 永不为真，`WHERE last_batch_at = ?` 传 None 会
+    返回 0 行，看板显示「0 条承诺、0 条风险事件」——比展示过期数据更糟。
+
+        stamp = current_batch_at(conn)
+        if stamp is None:
+            rows = conn.execute("SELECT * FROM promise")
+        else:
+            rows = conn.execute(
+                "SELECT * FROM promise WHERE last_batch_at = ?", (stamp,))
+
+    不回填合成批次戳：批次戳的语义是「这批数据何时产出」，回填等于伪造它。
+
+    戳的格式由 run_batch 统一生成：`datetime.now(timezone.utc).isoformat(
+    timespec="seconds")`，形如 `2026-09-07T17:03:24+00:00`。这里用字符串
+    `MAX()` 比较，所以**测试里的戳必须用同一格式**——混入 `...T10:00:00Z`
+    会在同一秒内因 `'Z' > '+'` 排到前面，选出错误的「最新」批次。
+    """
     stamps = []
     for table in ("promise", "risk_event"):
         row = conn.execute(
@@ -282,8 +303,8 @@ def format_report(report: BatchReport,
 
     lines.append(
         f"\n话术合规：共 {report.replies_total} 条 | 阻断 {report.replies_blocked}"
-        f"（编造单号）| 警告 {report.replies_warned}（编造称谓）"
-        f"| 含新承诺 {report.replies_with_promise}"
+        f"（编造单号/他人单号）| 警告 {report.replies_warned}（编造称谓）"
+        f"| 含新承诺 {report.replies_with_promise}（硬时限）"
     )
 
     if not prices:

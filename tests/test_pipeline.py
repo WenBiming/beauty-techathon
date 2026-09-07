@@ -320,14 +320,49 @@ def test_main_without_price_reports_tokens_only(conn, monkeypatch, capsys):
     assert "¥" not in capsys.readouterr().out
 
 
+L2_COMPLIANCE_PROBE = json.dumps({
+    "risk_attribution": "真实风险在上一单未闭环",
+    "suggested_actions": ["先兑现承诺"],
+    # 四条话术各踩一类：编造单号 / 编造称谓 / 硬时限承诺 / 干净。
+    "replies": [
+        {"tone": "专业", "text": "补发件已发出，顺丰单号 SF1234567890，请查收。"},
+        {"tone": "致歉", "text": "女士您好，非常抱歉让您久等了。"},
+        {"tone": "专业", "text": "我已加急标记，48小时内发出。"},
+        {"tone": "安抚", "text": "非常理解您着急的心情，我这边帮您盯着仓库进度。"},
+    ],
+}, ensure_ascii=False)
+
+
+class ComplianceProbeClient(RoutingClient):
+    """L2 返回一组**故意各踩一类**的话术，让合规计数器有确定的非零期望值。"""
+
+    def complete(self, model, system, user, *, max_tokens=800, temperature=0.1):
+        self.calls[model] += 1
+        if model == "qwen3.8-flash":
+            return llm.LLMResponse(L1_OK, model, 586, 74)
+        return llm.LLMResponse(L2_COMPLIANCE_PROBE, model, 1500, 300)
+
+
 def test_batch_report_counts_compliance(conn):
-    """批处理报告要给出话术合规统计——这是本作品「AI 只建议不发送」铁律的量化。"""
+    """批处理报告要给出话术合规统计——这是本作品「AI 只建议不发送」铁律的量化。
+
+    期望值写死。**不要退回 `>= 0`**：三个字段都是 dataclass 默认 0、只做 `+= 1`
+    的 int 计数器，`>= 0` 恒成立——包括「合规统计整块被删掉」的实现，那样的
+    断言等于没有断言（本项目第四次踩这个坑）。
+    """
+    r = pipeline.run_batch(conn, ComplianceProbeClient(), ["S00005", "S00099"])
+    # 2 个会话 × 4 条话术
+    assert r.replies_total == 8
+    assert r.replies_blocked == 2, "每会话 1 条编造单号"
+    assert r.replies_warned == 2, "每会话 1 条编造称谓"
+    assert r.replies_with_promise == 2, "每会话 1 条硬时限承诺"
+
+
+def test_clean_replies_count_as_zero(conn):
+    """反向钉死：干净话术必须计 0，否则计数器可能只是在无脑累加。"""
     r = pipeline.run_batch(conn, RoutingClient(), ["S00005", "S00099"])
-    assert r.replies_total > 0
-    assert r.replies_blocked >= 0
-    assert r.replies_warned >= 0
-    assert r.replies_with_promise >= 0
-    assert r.replies_blocked <= r.replies_total
+    assert r.replies_total == 2
+    assert (r.replies_blocked, r.replies_warned, r.replies_with_promise) == (0, 0, 0)
 
 
 def test_format_report_includes_compliance_section(conn):
