@@ -167,6 +167,21 @@ def test_third_party_title_is_not_flagged(conn):
     assert [i for i in r.issues if i.kind == compliance.KIND_HONORIFIC] == []
 
 
+def test_third_party_honorific_across_fullwidth_and_ascii_punctuation_is_not_flagged(conn):
+    """回归测试：NFKC 归一化会把「，！？；：」转成 ASCII 的「,!?;:」，「我是」
+    模式的排除字符集若只列全角标点，这些标点就不再充当小句边界——「我是新
+    客服！主管说了会处理」这类第三方转述会被小句吞并进自称模式，误判成客服
+    自称「主管」。四种标点（，！？；：中至少各构造一条，覆盖会被 NFKC 改写的
+    ，！？；；见下）各造一条第三方转述，都不该报 KIND_HONORIFIC；「。」不受
+    NFKC 影响，作为对照一并断言。
+    """
+    for sep in ("！", "，", "？", "；", "：", "。"):
+        text = f"我是新客服{sep}主管说了会处理"
+        r = compliance.check_reply(conn, "S00099", "专业", text)
+        h = [i for i in r.issues if i.kind == compliance.KIND_HONORIFIC]
+        assert h == [], f"分隔符 {sep!r} 未能把「我是新客服」与「主管」切开：{h}"
+
+
 def test_new_promise_is_info_and_extracted(conn):
     r = compliance.check_reply(
         conn, "S00099", "专业", "您的订单我已加急标记，48小时内一定发出。")
